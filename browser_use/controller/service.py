@@ -37,13 +37,15 @@ logger = logging.getLogger(__name__)
 
 Context = TypeVar('Context')
 
-
+# need to pass in tool_call_callback
 class Controller(Generic[Context]):
 	def __init__(
 		self,
 		exclude_actions: list[str] = [],
 		output_model: type[BaseModel] | None = None,
+		tool_call_callback=None, 
 	):
+		self.tool_call_callback = tool_call_callback # need this  
 		self.registry = Registry[Context](exclude_actions)
 
 		"""Register all default browser actions"""
@@ -875,15 +877,32 @@ class Controller(Generic[Context]):
 				# 	},
 				# 	span_type='TOOL',
 				# ):
-				result = await self.registry.execute_action(
-					action_name=action_name,
-					params=params,
-					browser_session=browser_session,
-					page_extraction_llm=page_extraction_llm,
-					sensitive_data=sensitive_data,
-					available_file_paths=available_file_paths,
-					context=context,
-				)
+			
+				
+				if params is not None:
+				# Notify about tool call starting via callback if it exists
+					if hasattr(self, 'tool_call_callback') and self.tool_call_callback:
+						# Format params for display (keep it concise)
+						params_str = str(params) if params else ""
+
+						try:
+							await self.tool_call_callback(
+								action_name=action_name,
+								details=params_str,
+								status="in_progress"
+							)
+						except Exception as e:
+							logger.debug(f"Failed to send tool call update: {e}")
+				
+					result = await self.registry.execute_action(
+						action_name=action_name,
+						params=params,
+						browser_session=browser_session,
+						page_extraction_llm=page_extraction_llm,
+						sensitive_data=sensitive_data,
+						available_file_paths=available_file_paths,
+						context=context,
+					)
 
 				# Laminar.set_span_output(result)
 
