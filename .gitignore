@@ -19,6 +19,7 @@ venv/
 
 # Build files
 dist/
+build/
 
 # Data files
 *.gif
