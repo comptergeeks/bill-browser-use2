@@ -627,6 +627,7 @@ class BrowserSession(BaseModel):
 		)
 		self._set_browser_keep_alive(True)  # we connected to an existing browser, dont kill it at the end
 
+
 	async def setup_new_browser_context(self) -> None:
 		"""Launch a new browser and browser_context"""
 		current_process = psutil.Process(os.getpid())
@@ -670,6 +671,7 @@ class BrowserSession(BaseModel):
 				# self.logger.debug('🌎 Created new incognito context in browser')
 			else:
 				# user data dir was provided, prepare it for use
+				print('preparing user data dir')
 				self.browser_profile.prepare_user_data_dir()
 
 				# search for potentially conflicting local processes running on the same user_data_dir
@@ -726,7 +728,6 @@ class BrowserSession(BaseModel):
 			self.browser = browser_from_context
 		# ^ self.browser can unfortunately still be None at the end ^
 		# playwright does not give us a browser object at all when we use launch_persistent_context()!
-
 		# Detect any new child chrome processes that we might have launched above
 		try:
 			child_pids_after_launch = {child.pid for child in current_process.children(recursive=True)}
@@ -859,7 +860,12 @@ class BrowserSession(BaseModel):
 		pages = self.browser_context.pages
 		foreground_page = None
 		if pages:
-			foreground_page = pages[0]
+			foreground_page = self.get_first_real_page()
+			# get the current page here
+			# aiCurrentPageTab = await foreground_page.evaluate('async () => { return await window.aiCurrentPage(); }')
+			# print(f'aiCurrentPageTab: {aiCurrentPageTab}')
+			# need to establish the same logic here
+		
 			self.logger.debug(
 				f'👁️‍🗨️ Found {len(pages)} existing tabs in browser, agent will start focused on Tab [{pages.index(foreground_page)}]: {foreground_page.url}'
 			)
@@ -1071,9 +1077,9 @@ class BrowserSession(BaseModel):
 				except Exception as e:
 					pass
 
-				self.logger.warning(
-					f'⚠️ Failed to resize browser window to {_log_size(self.browser_profile.window_size)} using CDP setWindowBounds: {type(e).__name__}: {e}'
-				)
+					self.logger.warning(
+						f'⚠️ Failed to resize browser window to {_log_size(self.browser_profile.window_size)} using CDP setWindowBounds: {type(e).__name__}: {e}'
+					)
 
 	def _set_browser_keep_alive(self, keep_alive: bool | None) -> None:
 		"""set the keep_alive flag on the browser_profile, defaulting to True if keep_alive is None"""
@@ -1152,6 +1158,9 @@ class BrowserSession(BaseModel):
 
 	# --- Tab management ---
 	async def get_current_page(self) -> Page:
+
+		print('getting current page')
+
 		"""Get the current page + ensure it's not None / closed"""
 
 		if not self.initialized:
@@ -1162,30 +1171,111 @@ class BrowserSession(BaseModel):
 			await self.start()
 			assert self.browser_context, 'BrowserContext is not set up'
 
+
+		# need to get this from electron	
+
+
+			
+		# # print(f'browser_context: {self.browser_context}')
+
+		# # get context first page, and run the script on that
+		# first_tab = self.browser_context.pages[0] 
+
+		
+
+
+		urls_to_filter = [
+			'http://localhost:1212/#/tabs',
+			'http://localhost:1212/',
+			'http://localhost:1212/#/sidebar',
+		]
+
+		browser_filtered_pages = []
+		for idx, page in enumerate(self.browser_context.pages):
+			url = page.url
+			# Filter out internal URLs
+			if url in urls_to_filter:
+				print(f"Filtering out internal URL at index {idx}: {url}")
+				continue
+			# Filter out data URLs that look like UI elements
+			if url.startswith('data:text/html') and 'suggestion-item' in url:
+				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
+				continue
+			browser_filtered_pages.append(page)
+
+		print(f'browser_filtered_pages: {browser_filtered_pages}')
+
+
+		first_real_page = browser_filtered_pages[0]
+		# this should return the active human and agent page and then we can just match the urls to the ones present in the browser_context.pages and then apply
+
+		data = await first_real_page.evaluate('async () => { return await window.currentPage(); }')
+		print(f'data: {data}')
+
+
+		ai_url = data.get('syncedPages', {}).get('aiUrl')
+		human_url = data.get('syncedPages', {}).get('humanUrl')
+
+
+		for page in self.browser_context.pages:
+			if page.url == ai_url:
+				self.agent_current_page = page
+				break
+			if page.url == human_url:
+				self.human_current_page = page
+				break
+
+		return self.agent_current_page
+		# ai page and human page need to be created
+
+	
+
+
+
+
+
+
+		# i think I need to get the current page from the ai state function
+		# need to 
+	
+		# for page in self.browser_context.pages:
+		# 	if page.url == aiCurrentPageTab['url']:
+		# 		self.agent_current_page = page
+		# 		break
+		
+		
+
+
+		# there is an ai state funciton, get the url from there and then match it to the browser_context.pages
+		
+
+
+
 		# if either focused page is closed, clear it so we dont use a dead object
-		if (not self.human_current_page) or self.human_current_page.is_closed():
-			self.human_current_page = None
-		if (not self.agent_current_page) or self.agent_current_page.is_closed():
-			self.agent_current_page = None
+		# if (not self.human_current_page) or self.human_current_page.is_closed():
+		# 	self.human_current_page = None
+		# if (not self.agent_current_page) or self.agent_current_page.is_closed():
+		# 	self.agent_current_page = None
 
-		# if either one is None, fallback to using the other one for both
-		self.agent_current_page = self.agent_current_page or self.human_current_page or None
-		self.human_current_page = self.human_current_page or self.agent_current_page or None
+		# # if either one is None, fallback to using the other one for both
+		# self.agent_current_page = self.agent_current_page or self.human_current_page or None
+		# self.human_current_page = self.human_current_page or self.agent_current_page or None
 
-		# if both are still None, fallback to using the first open tab we can find
-		if self.agent_current_page is None:
-			if self.browser_context.pages:
-				first_available_tab = self.browser_context.pages[0]
-				self.agent_current_page = first_available_tab
-				self.human_current_page = first_available_tab
-			else:
-				# if all tabs are closed, open a new one
-				new_tab = await self.create_new_tab()
-				self.agent_current_page = new_tab
-				self.human_current_page = new_tab
+		# # if both are still None, fallback to using the first open tab we can find
+		# if self.agent_current_page is None:
+		# 	if self.browser_context.pages:
+		# 		first_available_tab = self.browser_context.pages[0]
+		# 		self.agent_current_page = first_available_tab
+		# 		self.human_current_page = first_available_tab
+		# 	else:
+		# 		# if all tabs are closed, open a new one
+		# 		new_tab = await self.create_new_tab()
+		# 		self.agent_current_page = new_tab
+		# 		self.human_current_page = new_tab
+		# assert self.agent_current_page is not None, f'{self} Failed to find or create a new page for the agent'
+		# assert self.human_current_page is not None, f'{self} Failed to find or create a new page for the human'
+		# print(f'agent_current_page: {self.agent_current_page}')
 
-		assert self.agent_current_page is not None, f'{self} Failed to find or create a new page for the agent'
-		assert self.human_current_page is not None, f'{self} Failed to find or create a new page for the human'
 
 		return self.agent_current_page
 
@@ -1320,18 +1410,79 @@ class BrowserSession(BaseModel):
 	@time_execution_async('--get_tabs_info')
 	async def get_tabs_info(self) -> list[TabInfo]:
 		"""Get information about all tabs"""
-
+		# this function needs to be updated to handle electorn code
 		tabs_info = []
-		for page_id, page in enumerate(self.browser_context.pages):
-			try:
-				tab_info = TabInfo(page_id=page_id, url=page.url, title=await asyncio.wait_for(page.title(), timeout=1))
-			except TimeoutError:
-				# page.title() can hang forever on tabs that are crashed/disappeared/about:blank
-				# we dont want to try automating those tabs because they will hang the whole script
-				self.logger.debug(f'⚠️ Failed to get tab info for tab #{page_id}: {_log_pretty_url(page.url)} (ignoring)')
-				tab_info = TabInfo(page_id=page_id, url='about:blank', title='ignore this tab and do not use it')
-			tabs_info.append(tab_info)
 
+		# session = await self.get_session()
+		print("making the call with the tabs info")
+		await self.get_current_page()
+		# i think I need to wrap each item in tab info
+
+		# with tabs info
+
+		# let's filter browser_context.pages --> and see if the state will match
+
+		# Define the URL prefixes to filter out
+		# the issue is that the tabs will not align...
+		urls_to_filter_prefixes = [
+			'http://localhost:1212/#/tabs',
+			'http://localhost:1212/#/sidebar',
+			'http://localhost:1212/index.html',
+			'http://localhost:1212/',  # Catches the root
+		]
+		
+
+		# maybe what's more efficient is to break after I hit the first element that is real, and then use that as the first page
+		# for now this works
+		browser_filtered_pages = []
+		for idx, page in enumerate(self.browser_context.pages):
+			url = page.url
+
+			# Filter out data URLs that are internal UI
+			if url.startswith('data:text/html') or ('suggestion-item' in url or 'No suggestions found' in url):
+				print(f"Filtering out data UI tab at index {idx}: {url[:100]}...")
+				continue
+
+			# Filter out internal localhost URLs by prefix
+			if any(url.startswith(prefix) for prefix in urls_to_filter_prefixes):
+				print(f"Filtering out internal URL at index {idx}: {url}")
+				continue
+
+			browser_filtered_pages.append(page)
+
+		if not browser_filtered_pages:
+			self.logger.warning("No real pages found after filtering, cannot get tab info.")
+			return []
+
+		first_real_page = browser_filtered_pages[0]
+		
+		
+		print(f'browser_filtered_pages: {browser_filtered_pages}')
+		# print(f'received tabs_info: {tabs_info}')
+		print(f'tabs_info: {tabs_info}')
+
+		tabs_info = await first_real_page.evaluate('async () => { return await window.tabInfo(); }')
+
+
+
+		print(f'agent_current_page: {self.agent_current_page}')
+
+		
+		# print(f'browser_context.pages: {self.browser_context.pages}') # I need to see the difference between the two
+		
+
+
+		# for page_id, page in enumerate(self.browser_context.pages):
+		# 	try:
+		# 		tab_info = TabInfo(page_id=page_id, url=page.url, title=await asyncio.wait_for(page.title(), timeout=1))
+		# 	except TimeoutError:
+		# 		# page.title() can hang forever on tabs that are crashed/disappeared/about:blank
+		# 		# we dont want to try automating those tabs because they will hang the whole script
+		# 		self.logger.debug(f'⚠️ Failed to get tab info for tab #{page_id}: {_log_pretty_url(page.url)} (ignoring)')
+		# 		tab_info = TabInfo(page_id=page_id, url='about:blank', title='ignore this tab and do not use it')
+		# 	tabs_info.append(tab_info)
+	
+		
 		return tabs_info
 
 	@require_initialization
@@ -1993,93 +2144,59 @@ class BrowserSession(BaseModel):
 
 	@time_execution_sync('--get_state_summary')  # This decorator might need to be updated to handle async
 	async def get_state_summary(self, cache_clickable_elements_hashes: bool) -> BrowserStateSummary:
-		"""Get a summary of the current browser state
+		try:
+			await self._wait_for_page_and_frames_load()
+			updated_state = await self._get_updated_state()
 
-		This method builds a BrowserStateSummary object that captures the current state
-		of the browser, including url, title, tabs, screenshot, and DOM tree.
+			if cache_clickable_elements_hashes:
+				if self._cached_clickable_element_hashes and self._cached_clickable_element_hashes.url == updated_state.url:
+					updated_state_clickable_elements = ClickableElementProcessor.get_clickable_elements(updated_state.element_tree)
+					for dom_element in updated_state_clickable_elements:
+						dom_element.is_new = (
+							ClickableElementProcessor.hash_dom_element(dom_element)
+							not in self._cached_clickable_element_hashes.hashes
+						)
+				self.logger.debug("[get_state_summary] Updated clickable elements for new state")
+				self._cached_clickable_element_hashes = CachedClickableElementHashes(
+					url=updated_state.url,
+					hashes=ClickableElementProcessor.get_clickable_elements_hashes(updated_state.element_tree),
+				)
 
-		Parameters:
-		-----------
-		cache_clickable_elements_hashes: bool
-			If True, cache the clickable elements hashes for the current state.
-			This is used to calculate which elements are new to the LLM since the last message,
-			which helps reduce token usage.
-		"""
-		await self._wait_for_page_and_frames_load()
-		updated_state = await self._get_updated_state()
-
-		# Find out which elements are new
-		# Do this only if url has not changed
-		if cache_clickable_elements_hashes:
-			# if we are on the same url as the last state, we can use the cached hashes
-			if self._cached_clickable_element_hashes and self._cached_clickable_element_hashes.url == updated_state.url:
-				# Pointers, feel free to edit in place
-				updated_state_clickable_elements = ClickableElementProcessor.get_clickable_elements(updated_state.element_tree)
-
-				for dom_element in updated_state_clickable_elements:
-					dom_element.is_new = (
-						ClickableElementProcessor.hash_dom_element(dom_element)
-						not in self._cached_clickable_element_hashes.hashes  # see which elements are new from the last state where we cached the hashes
-					)
-			# in any case, we need to cache the new hashes
-			self._cached_clickable_element_hashes = CachedClickableElementHashes(
-				url=updated_state.url,
-				hashes=ClickableElementProcessor.get_clickable_elements_hashes(updated_state.element_tree),
-			)
-
-		assert updated_state
-		self._cached_browser_state_summary = updated_state
-
-		return self._cached_browser_state_summary
+			assert updated_state
+			self._cached_browser_state_summary = updated_state
+			self.logger.debug("[get_state_summary] Returning updated state summary")
+			return self._cached_browser_state_summary
+		except Exception as e:
+			self.logger.error(f"[get_state_summary] Exception: {type(e).__name__}: {e}")
+			raise
 
 	async def _get_updated_state(self, focus_element: int = -1) -> BrowserStateSummary:
-		"""Update and return state."""
-
+		self.logger.debug(f"[_get_updated_state] Called with focus_element={focus_element}")
 		page = await self.get_current_page()
-
-		# Check if current page is still valid, if not switch to another available page
+		self.logger.debug(f"[_get_updated_state] Got current page: {page}")
 		try:
-			# Test if page is still accessible
 			await page.evaluate('1')
+			self.logger.debug("[_get_updated_state] Page is accessible")
 		except Exception as e:
-			self.logger.debug(f'👋 Current page is no longer accessible: {type(e).__name__}: {e}')
+			self.logger.debug(f'[_get_updated_state] Current page is no longer accessible: {type(e).__name__}: {e}')
 			raise BrowserError('Browser closed: no valid pages available')
 
 		try:
 			await self.remove_highlights()
+			self.logger.debug("[_get_updated_state] Removed highlights")
 			dom_service = DomService(page)
 			content = await dom_service.get_clickable_elements(
 				focus_element=focus_element,
 				viewport_expansion=self.browser_profile.viewport_expansion,
 				highlight_elements=self.browser_profile.highlight_elements,
 			)
-
+			self.logger.debug("[_get_updated_state] Got clickable elements from DOM service")
 			tabs_info = await self.get_tabs_info()
-
-			# Get all cross-origin iframes within the page and open them in new tabs
-			# mark the titles of the new tabs so the LLM knows to check them for additional content
-			# unfortunately too buggy for now, too many sites use invisible cross-origin iframes for ads, tracking, youtube videos, social media, etc.
-			# and it distracts the bot by opening a lot of new tabs
-			# iframe_urls = await dom_service.get_cross_origin_iframes()
-			# outer_page = self.agent_current_page
-			# for url in iframe_urls:
-			# 	if url in [tab.url for tab in tabs_info]:
-			# 		continue  # skip if the iframe if we already have it open in a tab
-			# 	new_page_id = tabs_info[-1].page_id + 1
-			# 	self.logger.debug(f'Opening cross-origin iframe in new tab #{new_page_id}: {url}')
-			# 	await self.create_new_tab(url)
-			# 	tabs_info.append(
-			# 		TabInfo(
-			# 			page_id=new_page_id,
-			# 			url=url,
-			# 			title=f'iFrame opened as new tab, treat as if embedded inside page {outer_page.url}: {page.url}',
-			# 			parent_page_url=outer_page.url,
-			# 		)
-			# 	)
-
+			self.logger.debug(f"[_get_updated_state] Got tabs info: {tabs_info}")
 			screenshot_b64 = await self.take_screenshot()
+			self.logger.debug("[_get_updated_state] Took screenshot")
 			pixels_above, pixels_below = await self.get_scroll_info(page)
-
+			self.logger.debug(f"[_get_updated_state] Got scroll info: above={pixels_above}, below={pixels_below}")
 			self.browser_state_summary = BrowserStateSummary(
 				element_tree=content.element_tree,
 				selector_map=content.selector_map,
@@ -2090,11 +2207,10 @@ class BrowserSession(BaseModel):
 				pixels_above=pixels_above,
 				pixels_below=pixels_below,
 			)
-
+			self.logger.debug("[_get_updated_state] Created BrowserStateSummary")
 			return self.browser_state_summary
 		except Exception as e:
-			self.logger.error(f'❌ Failed to update browser_state_summary: {type(e).__name__}: {e}')
-			# Return last known good state if available
+			self.logger.error(f'[_get_updated_state] Failed to update browser_state_summary: {type(e).__name__}: {e}')
 			if hasattr(self, 'browser_state_summary'):
 				return self.browser_state_summary
 			raise
@@ -2109,73 +2225,118 @@ class BrowserSession(BaseModel):
 		assert self.agent_current_page is not None, 'Agent current page is not set'
 
 		page = await self.get_current_page()
+		
 		await page.wait_for_load_state(
 			timeout=5000,
 		)  # page has already loaded by this point, this is extra for previous action animations/frame loads to settle
+		print("🔍 Taking screenshot of page: ", page.url)
+
 
 		# 0. Attempt full-page screenshot (sometimes times out for huge pages)
-		try:
-			screenshot = await page.screenshot(
-				full_page=full_page,
-				scale='css',
-				timeout=15000,
-				animations='disabled',
-				caret='initial',
-			)
+		# try:
+		# 	screenshot = await page.screenshot(
+		# 		full_page=full_page,
+		# 		scale='css',
+		# 		timeout=15000,
+		# 		animations='disabled',
+		# 		caret='initial',
+		# 	)
 
-			screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
-			return screenshot_b64
-		except Exception as e:
-			self.logger.error(
-				f'❌ Failed to take full-page screenshot: {type(e).__name__}: {e} falling back to viewport-only screenshot'
-			)
+		# 	screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
+		# 	return screenshot_b64
+		# except Exception as e:
+		# 	self.logger.error(
+		# 		f'❌ Failed to take full-page screenshot: {type(e).__name__}: {e} falling back to viewport-only screenshot'
+		# 	)
 
 		# Fallback method: manually expand the viewport and take a screenshot of the entire viewport
 
 		# 1. Get current page dimensions
-		dimensions = await page.evaluate("""() => {
-			return {
-				width: window.innerWidth,
-				height: window.innerHeight,
-				devicePixelRatio: window.devicePixelRatio || 1
-			};
-		}""")
+		# dimensions = await page.evaluate("""() => {
+		# 	return {
+		# 		width: window.innerWidth,
+		# 		height: window.innerHeight,
+		# 		devicePixelRatio: window.devicePixelRatio || 1
+		# 	};
+		# }""")
 
-		# 2. Save current viewport state and calculate expanded dimensions
-		original_viewport = page.viewport_size
-		viewport_expansion = self.browser_profile.viewport_expansion if self.browser_profile.viewport_expansion else 0
+		# # 2. Save current viewport state and calculate expanded dimensions
+		# original_viewport = page.viewport_size
+		# viewport_expansion = self.browser_profile.viewport_expansion if self.browser_profile.viewport_expansion else 0
 
-		expanded_width = dimensions['width']  # Keep width unchanged
-		expanded_height = dimensions['height'] + viewport_expansion
+		# expanded_width = dimensions['width']  # Keep width unchanged
+		# expanded_height = dimensions['height'] + viewport_expansion
 
-		# 3. Expand the viewport if we are using one
-		if original_viewport:
-			await page.set_viewport_size({'width': expanded_width, 'height': expanded_height})
+		# # 3. Expand the viewport if we are using one
+		# if original_viewport:
+		# 	await page.set_viewport_size({'width': expanded_width, 'height': expanded_height})
+
+		# try:
+		# 	# 4. Take full-viewport screenshot
+		# 	screenshot = await page.screenshot(
+		# 		full_page=False,
+		# 		scale='css',
+		# 		timeout=30000,
+		# 		clip={'x': 0, 'y': 0, 'width': expanded_width, 'height': expanded_height},
+		# 		# animations='disabled',   # these can cause CSP errors on some pages, leading to a red herring "waiting for fonts to load" error
+		# 		# caret='initial',
+		# 	)
+		# 	# TODO: manually take multiple clipped screenshots to capture the full height and stitch them together?
+
+		# 	screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
+		# 	return screenshot_b64
+
+		# finally:
+		# 	# 5. Restore original viewport state if we expanded it
+		# 	if original_viewport:
+		# 		# Viewport was originally enabled, restore to original dimensions
+		# 		await page.set_viewport_size(original_viewport)
+		# 	else:
+		# 		# Viewport was originally disabled, no need to restore it
+		# 		# await page.set_viewport_size(None)  # unfortunately this is not supported by playwright
+		# 		pass
 
 		try:
-			# 4. Take full-viewport screenshot
+			# Check if this is a background tab by using window.aiState()
+			try:
+				browser_state = await page.evaluate('async () => { return await window.aiState(); }')
+				if browser_state and browser_state.get('tabs'):
+					# Try to take an offscreen screenshot
+					tab_id = None
+					
+					# Find the current tab ID
+					tabs_info = browser_state.get('tabs', [])
+					curr_ai_index = browser_state.get('index', 0)
+					
+					if 0 <= curr_ai_index < len(tabs_info):
+						# This is likely a background AI tab - use offscreen screenshot
+						result = await page.evaluate('async () => { return await window.takeOffscreenScreenshot(); }')
+						
+						if result and result.get('success'):
+							return result.get('data', '')
+			except Exception as e:
+				logger.debug(f"Error with offscreen screenshot: {str(e)}")
+			
+			# Fall back to regular screenshot if offscreen fails
+			await page.bring_to_front()
+			await page.wait_for_load_state()
+
 			screenshot = await page.screenshot(
-				full_page=False,
-				scale='css',
-				timeout=30000,
-				clip={'x': 0, 'y': 0, 'width': expanded_width, 'height': expanded_height},
-				# animations='disabled',   # these can cause CSP errors on some pages, leading to a red herring "waiting for fonts to load" error
-				# caret='initial',
+				full_page=full_page,
+				animations='disabled',
 			)
-			# TODO: manually take multiple clipped screenshots to capture the full height and stitch them together?
 
 			screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 			return screenshot_b64
 
-		finally:
-			# 5. Restore original viewport state if we expanded it
-			if original_viewport:
-				# Viewport was originally enabled, restore to original dimensions
-				await page.set_viewport_size(original_viewport)
-			else:
-				# Viewport was originally disabled, no need to restore it
-				# await page.set_viewport_size(None)  # unfortunately this is not supported by playwright
-				pass
+		except Exception as e:
+			logger.warning(f"⚠️ Failed to take screenshot: {str(e)}")
+			
+			# For background tabs or failed screenshots, return a simple placeholder image
+			# This is a tiny 1x1 transparent PNG
+			placeholder = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+			
+			return placeholder
 
 	# region - User Actions
 
@@ -2601,6 +2762,8 @@ class BrowserSession(BaseModel):
 	async def create_new_tab(self, url: str | None = None) -> Page:
 		"""Create a new tab and optionally navigate to a URL"""
 
+
+		# update this function to use electron as well 
 		if url and not self._is_url_allowed(url):
 			raise BrowserError(f'Cannot create new tab with non-allowed URL: {url}')
 
@@ -2614,27 +2777,22 @@ class BrowserSession(BaseModel):
 			await self.start()
 			assert self.browser_context, 'Browser context is not set'
 
-		new_page = await self.browser_context.new_page()
+		# new_page = await self.browser_context.new_page()
 
 		# Update agent tab reference
-		self.agent_current_page = new_page
+		# self.agent_current_page = new_page
 
 		# Update human tab reference if there is no human tab yet
-		if (not self.human_current_page) or self.human_current_page.is_closed():
-			self.human_current_page = new_page
+		# if (not self.human_current_page) or self.human_current_page.is_closed():
+		# 	self.human_current_page = new_page
 
-		await new_page.wait_for_load_state()
+		# await new_page.wait_for_load_state()
 
 		# Set the viewport size for the new tab
-		if self.browser_profile.viewport:
-			await new_page.set_viewport_size(self.browser_profile.viewport)
+		# if self.browser_profile.viewport:
+		# 	await new_page.set_viewport_size(self.browser_profile.viewport)
 
-		if url:
-			try:
-				await new_page.goto(url, wait_until='domcontentloaded')
-				await self._wait_for_page_and_frames_load(timeout_overwrite=1)
-			except Exception as e:
-				self.logger.error(f'❌ Error navigating to {url}: {type(e).__name__}: {e}')
+		
 
 		assert self.human_current_page is not None
 		assert self.agent_current_page is not None
@@ -2644,12 +2802,26 @@ class BrowserSession(BaseModel):
 		# 	assert self.agent_current_page.url == 'about:blank'
 
 		# if there are any unused about:blank tabs after we open a new tab, close them to clean up unused tabs
-		for page in self.browser_context.pages:
-			if page.url == 'about:blank' and page != self.agent_current_page:
-				await page.close()
-				self.human_current_page = (  # in case we just closed the human's tab, fix the refs
-					self.human_current_page if not self.human_current_page.is_closed() else self.agent_current_page
-				)
+		# for page in self.browser_context.pages:
+		# 	if page.url == 'about:blank' and page != self.agent_current_page:
+		# 		await page.close()
+		# 		self.human_current_page = (  # in case we just closed the human's tab, fix the refs
+		# 			self.human_current_page if not self.human_current_page.is_closed() else self.agent_current_page
+		# 		)
+
+		handlerOfEvents = self.get_first_real_page()
+
+
+		# maybe try and make sure that newTab waits until the page is loaded
+		await handlerOfEvents.evaluate('async () => { return await window.newTab({ url }); }')
+
+		new_tabs = self.get_all_filtered_tabs()
+
+
+		new_page = new_tabs[len(new_tabs) - 1]
+
+
+		self.agent_current_page = new_page
 
 		return new_page
 
@@ -2896,3 +3068,51 @@ class BrowserSession(BaseModel):
 			`;
 			document.head.appendChild(style);
 		}""")
+	
+	
+	def get_all_filtered_tabs(self) ->  list[Page]: 
+		"""Get the first real page from the browser context."""
+		urls_to_filter = [
+			'http://localhost:1212/#/tabs',
+			'http://localhost:1212/',
+			'http://localhost:1212/#/sidebar',
+		]
+
+		browser_filtered_pages = []
+		for idx, page in enumerate(self.browser_context.pages):
+			url = page.url
+			# Filter out internal URLs
+			if url in urls_to_filter:
+				print(f"Filtering out internal URL at index {idx}: {url}")
+				continue
+			# Filter out data URLs that look like UI elements
+			if url.startswith('data:text/html') and 'suggestion-item' in url:
+				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
+				continue
+			browser_filtered_pages.append(page)
+
+		return browser_filtered_pages
+	
+	def get_first_real_page(self) ->  Page: 
+		"""Get the first real page from the browser context."""
+		urls_to_filter = [
+			'http://localhost:1212/#/tabs',
+			'http://localhost:1212/',
+			'http://localhost:1212/#/sidebar',
+		]
+		# this function just needs to return the first page, not itereate through all of them
+		first_real_page = None
+		for idx, page in enumerate(self.browser_context.pages):
+			url = page.url
+			# Filter out internal URLs
+			if url in urls_to_filter:
+				print(f"Filtering out internal URL at index {idx}: {url}")
+				continue
+			# Filter out data URLs that look like UI elements
+			elif url.startswith('data:text/html') or 'suggestion-item' in url:
+				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
+				continue
+			else:
+				return page
+		# if the first case is never hit, then we return the first page of the context
+		return self.browser_context.pages[0]

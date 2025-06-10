@@ -781,14 +781,18 @@ class Agent(Generic[Context]):
 	@time_execution_async('--step (agent)')
 	async def step(self, step_info: AgentStepInfo | None = None) -> None:
 		"""Execute one step of the task"""
+		print('step')
 		browser_state_summary = None
 		model_output = None
 		result: list[ActionResult] = []
 		step_start_time = time.time()
 		tokens = 0
-
+		print('about to enter try')
 		try:
+			print('about to get state summary')
+			# this is 
 			browser_state_summary = await self.browser_session.get_state_summary(cache_clickable_elements_hashes=True)
+			print('about to get current page')
 			current_page = await self.browser_session.get_current_page()
 
 			self._log_step_context(current_page, browser_state_summary)
@@ -962,8 +966,28 @@ class Agent(Generic[Context]):
 	async def _handle_step_error(self, error: Exception) -> list[ActionResult]:
 		"""Handle all types of errors that can occur during a step"""
 		include_trace = self.logger.isEnabledFor(logging.DEBUG)
+
+		# Get the last attempted action from history
+		last_action_info = "No action was performed"
+		if self.state.history and self.state.history.history:
+			last_history_item = self.state.history.history[-1]
+			if last_history_item and last_history_item.model_output and last_history_item.model_output.action:
+				try:
+					# Format the last action for logging
+					last_action = last_history_item.model_output.action[0]
+					action_data = last_action.model_dump(exclude_unset=True)
+					action_name = next(iter(action_data.keys()))
+					action_params = action_data.get(action_name, {})
+					last_action_info = f"Error occurred during action: {action_name} with params: {action_params}"
+				except (IndexError, StopIteration, AttributeError):
+					last_action_info = "Could not retrieve last action details"
+
 		error_msg = AgentError.format_error(error, include_trace=include_trace)
 		prefix = f'❌ Result failed {self.state.consecutive_failures + 1}/{self.settings.max_failures} times:\n '
+		
+		# Log the action that failed
+		self.logger.error(last_action_info)
+
 		self.state.consecutive_failures += 1
 
 		if 'Browser closed' in error_msg:

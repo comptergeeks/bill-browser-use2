@@ -207,7 +207,8 @@ class Controller(Generic[Context]):
 
 		@self.registry.action('Open a specific url in new tab', param_model=OpenTabAction)
 		async def open_tab(params: OpenTabAction, browser_session: BrowserSession):
-			await browser_session.create_new_tab(params.url)
+			page = await browser_session.get_current_page()
+			await page.evaluate(f'window.createNewTab("{params.url}", true)')
 			msg = f'🔗  Opened new tab with {params.url}'
 			logger.info(msg)
 			return ActionResult(extracted_content=msg, include_in_memory=True)

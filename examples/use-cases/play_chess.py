@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from browser_use import Agent, Controller
 from browser_use.agent.views import ActionResult
 from browser_use.browser.context import BrowserContext
+from browser_use.browser.session import BrowserSession
 
 if not os.getenv('OPENAI_API_KEY'):
 	raise ValueError('OPENAI_API_KEY is not set. Please add it to your environment variables.')
@@ -305,6 +306,11 @@ async def play_move(params: PlayMoveParams, browser: BrowserContext):
 
 # --- Main Execution ---
 async def main():
+	from browser_use.browser.session import BrowserSession
+
+	# Connect to the running browser via CDP URL (as in run.py)
+	browser_session = BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222")
+
 	agent = Agent(
 		task="""
         Objective: Play chess against the computer on Lichess and win.
@@ -322,8 +328,9 @@ async def main():
         8. Repeat steps 4-7 until the game ends. If anything seems wrong, use 'Read Chess Board' again.
         9. Announce the final result.
         """,
-		llm=ChatOpenAI(model='gpt-4o'),
+		llm=ChatOpenAI(model='gpt-4.1'),
 		controller=controller,
+		browser_session=browser_session,
 	)
 	result = await agent.run()
 	logger.info(result)

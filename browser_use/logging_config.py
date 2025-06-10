@@ -66,6 +66,7 @@ def setup_logging():
 		pass  # Level already exists, which is fine
 
 	log_type = os.getenv('BROWSER_USE_LOGGING_LEVEL', 'info').lower()
+	print(f'log_type: {log_type}')
 
 	# Check if handlers are already set up
 	if logging.getLogger().hasHandlers():
