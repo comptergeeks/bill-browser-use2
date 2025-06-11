@@ -278,7 +278,7 @@ class Agent(Generic[Context]):
 				max_input_tokens=self.settings.max_input_tokens,
 				include_attributes=self.settings.include_attributes,
 				message_context=self.settings.message_context,
-				sensitive_data=sensitive_data,
+				sensitive_data=sensitive_data, # type: ignore
 				available_file_paths=self.settings.available_file_paths,
 			),
 			state=self.state.message_manager_state,

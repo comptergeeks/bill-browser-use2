@@ -865,7 +865,7 @@ class BrowserSession(BaseModel):
 			# aiCurrentPageTab = await foreground_page.evaluate('async () => { return await window.aiCurrentPage(); }')
 			# print(f'aiCurrentPageTab: {aiCurrentPageTab}')
 			# need to establish the same logic here
-		
+
 			self.logger.debug(
 				f'👁️‍🗨️ Found {len(pages)} existing tabs in browser, agent will start focused on Tab [{pages.index(foreground_page)}]: {foreground_page.url}'
 			)
@@ -927,13 +927,13 @@ class BrowserSession(BaseModel):
 					console.log('BrowserUse Foreground tab change event fired', document.location.href);
 				}
 			});
-			
+
 			// --- Method 2: focus/blur events, most reliable method for headful browsers ---
 			window.addEventListener('focus', async () => {
 				await window._BrowserUseonTabVisibilityChange({ source: 'focus', url: document.location.href });
 				console.log('BrowserUse Foreground tab change event fired', document.location.href);
 			});
-			
+
 			// --- Method 3: pointermove events (may be fired by agent if we implement AI hover movements, also very noisy) ---
 			// Use a throttled handler to avoid excessive calls
 			// let lastMove = 0;
@@ -1172,16 +1172,16 @@ class BrowserSession(BaseModel):
 			assert self.browser_context, 'BrowserContext is not set up'
 
 
-		# need to get this from electron	
+		# need to get this from electron
 
 
-			
+
 		# # print(f'browser_context: {self.browser_context}')
 
 		# # get context first page, and run the script on that
-		# first_tab = self.browser_context.pages[0] 
+		# first_tab = self.browser_context.pages[0]
 
-		
+
 
 
 		urls_to_filter = [
@@ -1228,7 +1228,7 @@ class BrowserSession(BaseModel):
 		return self.agent_current_page
 		# ai page and human page need to be created
 
-	
+
 
 
 
@@ -1236,18 +1236,18 @@ class BrowserSession(BaseModel):
 
 
 		# i think I need to get the current page from the ai state function
-		# need to 
-	
+		# need to
+
 		# for page in self.browser_context.pages:
 		# 	if page.url == aiCurrentPageTab['url']:
 		# 		self.agent_current_page = page
 		# 		break
-		
-		
+
+
 
 
 		# there is an ai state funciton, get the url from there and then match it to the browser_context.pages
-		
+
 
 
 
@@ -1430,7 +1430,7 @@ class BrowserSession(BaseModel):
 			'http://localhost:1212/index.html',
 			'http://localhost:1212/',  # Catches the root
 		]
-		
+
 
 		# maybe what's more efficient is to break after I hit the first element that is real, and then use that as the first page
 		# for now this works
@@ -1455,8 +1455,8 @@ class BrowserSession(BaseModel):
 			return []
 
 		first_real_page = browser_filtered_pages[0]
-		
-		
+
+
 		print(f'browser_filtered_pages: {browser_filtered_pages}')
 		# print(f'received tabs_info: {tabs_info}')
 		print(f'tabs_info: {tabs_info}')
@@ -1467,22 +1467,6 @@ class BrowserSession(BaseModel):
 
 		print(f'agent_current_page: {self.agent_current_page}')
 
-		
-		# print(f'browser_context.pages: {self.browser_context.pages}') # I need to see the difference between the two
-		
-
-
-		# for page_id, page in enumerate(self.browser_context.pages):
-		# 	try:
-		# 		tab_info = TabInfo(page_id=page_id, url=page.url, title=await asyncio.wait_for(page.title(), timeout=1))
-		# 	except TimeoutError:
-		# 		# page.title() can hang forever on tabs that are crashed/disappeared/about:blank
-		# 		# we dont want to try automating those tabs because they will hang the whole script
-		# 		self.logger.debug(f'⚠️ Failed to get tab info for tab #{page_id}: {_log_pretty_url(page.url)} (ignoring)')
-		# 		tab_info = TabInfo(page_id=page_id, url='about:blank', title='ignore this tab and do not use it')
-		# 	tabs_info.append(tab_info)
-	
-		
 		return tabs_info
 
 	@require_initialization
@@ -2225,7 +2209,7 @@ class BrowserSession(BaseModel):
 		assert self.agent_current_page is not None, 'Agent current page is not set'
 
 		page = await self.get_current_page()
-		
+
 		await page.wait_for_load_state(
 			timeout=5000,
 		)  # page has already loaded by this point, this is extra for previous action animations/frame loads to settle
@@ -2303,20 +2287,20 @@ class BrowserSession(BaseModel):
 				if browser_state and browser_state.get('tabs'):
 					# Try to take an offscreen screenshot
 					tab_id = None
-					
+
 					# Find the current tab ID
 					tabs_info = browser_state.get('tabs', [])
 					curr_ai_index = browser_state.get('index', 0)
-					
+
 					if 0 <= curr_ai_index < len(tabs_info):
 						# This is likely a background AI tab - use offscreen screenshot
 						result = await page.evaluate('async () => { return await window.takeOffscreenScreenshot(); }')
-						
+
 						if result and result.get('success'):
 							return result.get('data', '')
 			except Exception as e:
 				logger.debug(f"Error with offscreen screenshot: {str(e)}")
-			
+
 			# Fall back to regular screenshot if offscreen fails
 			await page.bring_to_front()
 			await page.wait_for_load_state()
@@ -2331,11 +2315,11 @@ class BrowserSession(BaseModel):
 
 		except Exception as e:
 			logger.warning(f"⚠️ Failed to take screenshot: {str(e)}")
-			
+
 			# For background tabs or failed screenshots, return a simple placeholder image
 			# This is a tiny 1x1 transparent PNG
 			placeholder = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-			
+
 			return placeholder
 
 	# region - User Actions
@@ -2763,7 +2747,7 @@ class BrowserSession(BaseModel):
 		"""Create a new tab and optionally navigate to a URL"""
 
 
-		# update this function to use electron as well 
+		# update this function to use electron as well
 		if url and not self._is_url_allowed(url):
 			raise BrowserError(f'Cannot create new tab with non-allowed URL: {url}')
 
@@ -2792,7 +2776,7 @@ class BrowserSession(BaseModel):
 		# if self.browser_profile.viewport:
 		# 	await new_page.set_viewport_size(self.browser_profile.viewport)
 
-		
+
 
 		assert self.human_current_page is not None
 		assert self.agent_current_page is not None
@@ -3067,9 +3051,9 @@ class BrowserSession(BaseModel):
 				}
 			`;
 			document.head.appendChild(style);
-		}""")	
-	
-	def get_all_filtered_tabs(self) ->  list[Page]: 
+		}""")
+
+	def get_all_filtered_tabs(self) ->  list[Page]:
 		"""Get the first real page from the browser context."""
 		urls_to_filter = [
 			'http://localhost:1212/#/tabs',
@@ -3091,8 +3075,8 @@ class BrowserSession(BaseModel):
 			browser_filtered_pages.append(page)
 
 		return browser_filtered_pages
-	
-	def get_first_real_page(self) ->  Page: 
+
+	def get_first_real_page(self) ->  Page:
 		"""Get the first real page from the browser context."""
 		urls_to_filter = [
 			'http://localhost:1212/#/tabs',
