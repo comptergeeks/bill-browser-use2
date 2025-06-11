@@ -66,7 +66,6 @@ def setup_logging():
 		pass  # Level already exists, which is fine
 
 	log_type = os.getenv('BROWSER_USE_LOGGING_LEVEL', 'info').lower()
-	print(f'log_type: {log_type}')
 
 	# Check if handlers are already set up
 	if logging.getLogger().hasHandlers():
@@ -78,8 +77,8 @@ def setup_logging():
 
 	class BrowserUseFormatter(logging.Formatter):
 		def format(self, record):
-			if isinstance(record.name, str) and record.name.startswith('browser_use.'):
-				record.name = record.name.split('.')[-2]
+			# if isinstance(record.name, str) and record.name.startswith('browser_use.'):
+			# 	record.name = record.name.split('.')[-2]
 			return super().format(record)
 
 	# Setup single handler for all loggers

@@ -1,17 +1,31 @@
+<<<<<<< HEAD
 import asyncio
 
+=======
+>>>>>>> 0.2.6
 import pytest
 from langchain_openai import ChatOpenAI
 from pytest_httpserver import HTTPServer
 
+<<<<<<< HEAD
 from browser_use.agent.service import Agent
 from browser_use.agent.views import AgentHistoryList
 from browser_use.browser import BrowserProfile, BrowserSession
+=======
+from browser_use import setup_logging
+
+setup_logging()
+
+from browser_use.agent.service import Agent
+from browser_use.agent.views import AgentHistoryList
+from browser_use.browser import BrowserSession
+>>>>>>> 0.2.6
 
 
 class TestCoreFunctionality:
 	"""Tests for core functionality of the Agent using real browser instances."""
 
+<<<<<<< HEAD
 	@pytest.fixture(scope='module')
 	def event_loop(self):
 		"""Create and provide an event loop for async tests."""
@@ -20,6 +34,9 @@ class TestCoreFunctionality:
 		loop.close()
 
 	@pytest.fixture(scope='module')
+=======
+	@pytest.fixture(scope='session')
+>>>>>>> 0.2.6
 	def http_server(self):
 		"""Create and provide a test HTTP server that serves static content."""
 		server = HTTPServer()
@@ -65,12 +82,17 @@ class TestCoreFunctionality:
 		yield server
 		server.stop()
 
+<<<<<<< HEAD
 	@pytest.fixture
+=======
+	@pytest.fixture(scope='session')
+>>>>>>> 0.2.6
 	def base_url(self, http_server):
 		"""Return the base URL for the test HTTP server."""
 		return f'http://{http_server.host}:{http_server.port}'
 
 	@pytest.fixture(scope='module')
+<<<<<<< HEAD
 	async def browser_session(self, event_loop):
 		"""Create and provide a BrowserSession instance with security disabled."""
 		browser_session = BrowserSession(
@@ -83,6 +105,15 @@ class TestCoreFunctionality:
 		await browser_session.stop()
 
 	@pytest.fixture
+=======
+	async def browser_session(self):
+		"""Create and provide a BrowserSession instance with security disabled."""
+		browser_session = BrowserSession(headless=True, user_data_dir=None)
+		yield browser_session
+		await browser_session.kill()
+
+	@pytest.fixture(scope='module')
+>>>>>>> 0.2.6
 	def llm(self):
 		"""Initialize language model for testing with minimal settings."""
 		return ChatOpenAI(
@@ -90,7 +121,10 @@ class TestCoreFunctionality:
 			temperature=0.0,
 		)
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_search_google(self, llm, browser_session, base_url):
 		"""Test 'Search Google' action using a mock search page."""
 		agent = Agent(
@@ -103,7 +137,10 @@ class TestCoreFunctionality:
 		assert 'go_to_url' in action_names
 		assert any('input_text' in action or 'click_element_by_index' in action for action in action_names)
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_go_to_url(self, llm, browser_session, base_url):
 		"""Test 'Navigate to URL' action."""
 		agent = Agent(
@@ -119,7 +156,10 @@ class TestCoreFunctionality:
 		page = await browser_session.get_current_page()
 		assert f'{base_url}/page1' in page.url
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_go_back(self, llm, browser_session, base_url):
 		"""Test 'Go back' action."""
 		# First navigate to page1, then to page2, then go back
@@ -137,7 +177,10 @@ class TestCoreFunctionality:
 		page = await browser_session.get_current_page()
 		assert f'{base_url}/page1' in page.url
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_click_element(self, llm, browser_session, base_url):
 		"""Test 'Click element' action."""
 		agent = Agent(
@@ -154,7 +197,10 @@ class TestCoreFunctionality:
 		page = await browser_session.get_current_page()
 		assert f'{base_url}/page2' in page.url
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_input_text(self, llm, browser_session, base_url):
 		"""Test 'Input text' action."""
 		agent = Agent(
@@ -172,7 +218,10 @@ class TestCoreFunctionality:
 		search_value = await page.evaluate("document.getElementById('search-box').value")
 		assert 'OpenAI' in search_value
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_switch_tab(self, llm, browser_session, base_url):
 		"""Test 'Switch tab' action."""
 		agent = Agent(
@@ -190,7 +239,10 @@ class TestCoreFunctionality:
 		page = await browser_session.get_current_page()
 		assert f'{base_url}/page1' in page.url
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_open_new_tab(self, llm, browser_session, base_url):
 		"""Test 'Open new tab' action."""
 		agent = Agent(
@@ -210,7 +262,10 @@ class TestCoreFunctionality:
 		page = await browser_session.get_current_page()
 		assert f'{base_url}/page2' in page.url
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_extract_page_content(self, llm, browser_session, base_url):
 		"""Test 'Extract page content' action."""
 		agent = Agent(
@@ -232,7 +287,10 @@ class TestCoreFunctionality:
 
 		assert extracted_content is not None, 'Expected content not found in extraction'
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_done_action(self, llm, browser_session, base_url):
 		"""Test 'Complete task' action."""
 		agent = Agent(
@@ -248,7 +306,10 @@ class TestCoreFunctionality:
 		# Verify the task was marked as successful
 		assert history.is_successful()
 
+<<<<<<< HEAD
 	@pytest.mark.asyncio
+=======
+>>>>>>> 0.2.6
 	async def test_scroll_down(self, llm, browser_session, base_url, http_server):
 		"""Test 'Scroll down' action and validate that the page actually scrolled."""
 		# Create a test page with scrollable content

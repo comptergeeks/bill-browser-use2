@@ -70,6 +70,10 @@ async def run_single_task(task_file):
 			headless=True,
 			user_data_dir=None,
 			chromium_sandbox=False,  # Disable sandbox for CI environment (GitHub Actions)
+<<<<<<< HEAD
+=======
+			stealth=True,
+>>>>>>> 0.2.6
 		)
 		session = BrowserSession(browser_profile=profile)
 		print('[DEBUG] Browser session created', file=sys.stderr)

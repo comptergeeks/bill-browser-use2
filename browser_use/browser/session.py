@@ -3067,8 +3067,7 @@ class BrowserSession(BaseModel):
 				}
 			`;
 			document.head.appendChild(style);
-		}""")
-	
+		}""")	
 	
 	def get_all_filtered_tabs(self) ->  list[Page]: 
 		"""Get the first real page from the browser context."""

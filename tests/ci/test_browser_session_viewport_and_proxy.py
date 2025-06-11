@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 from browser_use.browser import BrowserProfile, BrowserSession
+=======
+from browser_use.browser import BrowserSession
+>>>>>>> 0.2.6
 from browser_use.browser.profile import ProxySettings
 
 
@@ -32,13 +36,18 @@ async def test_window_size_with_real_browser():
 	This test is skipped in CI environments.
 	"""
 	# Create browser profile with headless mode and specific dimensions
+<<<<<<< HEAD
 	browser_profile = BrowserProfile(
+=======
+	browser_session = BrowserSession(
+>>>>>>> 0.2.6
 		user_data_dir=None,
 		headless=True,  # window size gets converted to viewport size in headless mode
 		window_size={'width': 999, 'height': 888},
 		maximum_wait_page_load_time=2.0,
 		minimum_wait_page_load_time=0.2,
 	)
+<<<<<<< HEAD
 
 	# Create browser session
 	browser_session = BrowserSession(browser_profile=browser_profile)
@@ -99,6 +108,61 @@ async def test_window_size_with_real_browser():
 		assert browser_session.browser_profile.screen['height'] > 0
 	finally:
 		await browser_session.stop()
+=======
+	await browser_session.start()
+	page = await browser_session.get_current_page()
+	assert page is not None, 'Failed to get current page'
+
+	# Get the context configuration used for browser window size
+	video_size = await page.evaluate("""
+			() => {
+				// This returns information about the context recording settings
+				// which should match our configured video size (browser_window_size)
+				try {
+					const settings = window.getPlaywrightContextSettings ? 
+						window.getPlaywrightContextSettings() : null;
+					if (settings && settings.recordVideo) {
+						return settings.recordVideo.size;
+					}
+				} catch (e) {}
+				
+				// Fallback to window dimensions
+				return {
+					width: window.innerWidth,
+					height: window.innerHeight
+				};
+			}
+		""")
+
+	# Let's also check the viewport size
+	actual_size = await page.evaluate("""
+			() => {
+				return {
+					width: window.innerWidth,
+					height: window.innerHeight
+				}
+			}
+		""")
+
+	print(f'Browser configured window_size={browser_session.browser_profile.window_size}')
+	print(f'Browser configured viewport_size: {browser_session.browser_profile.viewport}')
+	print(f'Browser content actual size: {actual_size}')
+
+	# This is a lightweight test to verify that the page has a size (details may vary by browser)
+	assert actual_size['width'] > 0, 'Expected viewport width to be positive'
+	assert actual_size['height'] > 0, 'Expected viewport height to be positive'
+
+	# assert that window_size got converted to viewport_size in headless mode
+	assert browser_session.browser_profile.headless is True
+	assert browser_session.browser_profile.viewport == {'width': 999, 'height': 888}
+	assert browser_session.browser_profile.window_size is None
+	assert browser_session.browser_profile.window_position is None
+	assert browser_session.browser_profile.no_viewport is False
+	# screen should be the detected display size (or default if no display detected)
+	assert browser_session.browser_profile.screen is not None
+	assert browser_session.browser_profile.screen['width'] > 0
+	assert browser_session.browser_profile.screen['height'] > 0
+>>>>>>> 0.2.6
 
 
 async def test_proxy_with_real_browser():
@@ -122,12 +186,18 @@ async def test_proxy_with_real_browser():
 	assert isinstance(proxy_dict, dict)
 	assert proxy_dict['server'] == 'http://non.existent.proxy:9999'
 
+<<<<<<< HEAD
 	# Create browser profile with proxy
 	browser_profile = BrowserProfile(
+=======
+	# Create browser session
+	browser_session = BrowserSession(
+>>>>>>> 0.2.6
 		headless=True,
 		proxy=proxy_settings,
 		user_data_dir=None,
 	)
+<<<<<<< HEAD
 
 	# Create browser session
 	browser_session = BrowserSession(browser_profile=browser_profile)
@@ -141,3 +211,13 @@ async def test_proxy_with_real_browser():
 		# would require setting up a whole fake proxy in a fixture
 	finally:
 		await browser_session.stop()
+=======
+	await browser_session.start()
+	# Success - the browser was initialized with our proxy settings
+	# We won't try to make requests (which would fail with non-existent proxy)
+	print('✅ Browser initialized with proxy settings successfully')
+	assert browser_session.browser_profile.proxy == proxy_settings
+
+	# TODO: create a network request in the browser and verify it goes through the proxy?
+	# would require setting up a whole fake proxy in a fixture
+>>>>>>> 0.2.6

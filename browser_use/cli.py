@@ -25,7 +25,6 @@ except ImportError:
 import langchain_anthropic
 import langchain_google_genai
 import langchain_openai
-from patchright.async_api import async_playwright
 
 try:
 	import readline
@@ -41,14 +40,13 @@ os.environ['BROWSER_USE_LOGGING_LEVEL'] = 'result'
 from browser_use import Agent, Controller
 from browser_use.agent.views import AgentSettings
 from browser_use.browser import BrowserSession
-from browser_use.browser.profile import BrowserChannel
 from browser_use.logging_config import addLoggingLevel
 
 # Paths
 USER_CONFIG_DIR = Path.home() / '.config' / 'browseruse'
 USER_CONFIG_FILE = USER_CONFIG_DIR / 'config.json'
 CHROME_PROFILES_DIR = USER_CONFIG_DIR / 'profiles'
-USER_DATA_DIR = CHROME_PROFILES_DIR / 'default'
+USER_DATA_DIR = CHROME_PROFILES_DIR / 'cli'
 
 # Default User settings
 MAX_HISTORY_LENGTH = 100
@@ -60,22 +58,22 @@ USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Logo components with styling for rich panels
 BROWSER_LOGO = """
-				   [white]   ++++++   +++++++++   [/]                                
-				   [white] +++     +++++     +++  [/]                                
-				   [white] ++    ++++   ++    ++  [/]                                
-				   [white] ++  +++       +++  ++  [/]                                
-				   [white]   ++++          +++    [/]                                
-				   [white]  +++             +++   [/]                                
-				   [white] +++               +++  [/]                                
-				   [white] ++   +++      +++  ++  [/]                                
-				   [white] ++    ++++   ++    ++  [/]                                
-				   [white] +++     ++++++    +++  [/]                                
-				   [white]   ++++++    +++++++    [/]                                
+				   [white]   ++++++   +++++++++   [/]
+				   [white] +++     +++++     +++  [/]
+				   [white] ++    ++++   ++    ++  [/]
+				   [white] ++  +++       +++  ++  [/]
+				   [white]   ++++          +++    [/]
+				   [white]  +++             +++   [/]
+				   [white] +++               +++  [/]
+				   [white] ++   +++      +++  ++  [/]
+				   [white] ++    ++++   ++    ++  [/]
+				   [white] +++     ++++++    +++  [/]
+				   [white]   ++++++    +++++++    [/]
 
 [white]██████╗ ██████╗  ██████╗ ██╗    ██╗███████╗███████╗██████╗[/]     [darkorange]██╗   ██╗███████╗███████╗[/]
 [white]██╔══██╗██╔══██╗██╔═══██╗██║    ██║██╔════╝██╔════╝██╔══██╗[/]    [darkorange]██║   ██║██╔════╝██╔════╝[/]
-[white]██████╔╝██████╔╝██║   ██║██║ █╗ ██║███████╗█████╗  ██████╔╝[/]    [darkorange]██║   ██║███████╗█████╗[/]  
-[white]██╔══██╗██╔══██╗██║   ██║██║███╗██║╚════██║██╔══╝  ██╔══██╗[/]    [darkorange]██║   ██║╚════██║██╔══╝[/]  
+[white]██████╔╝██████╔╝██║   ██║██║ █╗ ██║███████╗█████╗  ██████╔╝[/]    [darkorange]██║   ██║███████╗█████╗[/]
+[white]██╔══██╗██╔══██╗██║   ██║██║███╗██║╚════██║██╔══╝  ██╔══██╗[/]    [darkorange]██║   ██║╚════██║██╔══╝[/]
 [white]██████╔╝██║  ██║╚██████╔╝╚███╔███╔╝███████║███████╗██║  ██║[/]    [darkorange]╚██████╔╝███████║███████╗[/]
 [white]╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝ ╚══════╝╚══════╝╚═╝  ╚═╝[/]     [darkorange]╚═════╝ ╚══════╝╚══════╝[/]
 """
@@ -252,27 +250,27 @@ class BrowserUseApp(App):
 		height: 100%;
 		layout: vertical;
 	}
-	
+
 	#logo-panel, #links-panel, #paths-panel, #info-panels {
 		border: solid $primary;
-		margin: 0 0 0 0; 
+		margin: 0 0 0 0;
 		padding: 0;
 	}
-	
+
 	#info-panels {
 		display: none;
 		layout: vertical;
 		height: auto;
 		min-height: 5;
 	}
-	
+
 	#top-panels {
 		layout: horizontal;
 		height: auto;
 		width: 100%;
 		min-height: 5;
 	}
-	
+
 	#browser-panel, #model-panel {
 		width: 1fr;
 		height: auto;
@@ -282,7 +280,7 @@ class BrowserUseApp(App):
 		margin: 0 1 0 0;
 		padding: 1;
 	}
-	
+
 	#tasks-panel {
 		width: 100%;
 		height: 1fr;
@@ -293,41 +291,41 @@ class BrowserUseApp(App):
 		overflow-y: scroll;
 		margin: 1 0 0 0;
 	}
-	
+
 	#browser-panel {
 		border-left: solid $primary-darken-2;
 	}
-	
+
 	#results-container {
 		display: none;
 	}
-	
+
 	#logo-panel {
 		width: 100%;
 		height: auto;
 		content-align: center middle;
 		text-align: center;
 	}
-	
+
 	#links-panel {
 		width: 100%;
 		padding: 1;
 		border: solid $primary;
 		height: auto;
 	}
-	
+
 	.link-white {
 		color: white;
 	}
-	
+
 	.link-purple {
 		color: purple;
 	}
-	
+
 	.link-magenta {
 		color: magenta;
 	}
-	
+
 	.link-green {
 		color: green;
 	}
@@ -335,24 +333,24 @@ class BrowserUseApp(App):
 	HorizontalGroup {
 		height: auto;
 	}
-	
+
 	.link-label {
 		width: auto;
 	}
-	
+
 	.link-url {
 		width: auto;
 	}
-	
+
 	.link-row {
 		width: 100%;
 		height: auto;
 	}
-	
+
 	#paths-panel {
 		color: $text-muted;
 	}
-	
+
 	#task-input-container {
 		border: solid $accent;
 		padding: 1;
@@ -360,34 +358,34 @@ class BrowserUseApp(App):
 		height: auto;
 		dock: bottom;
 	}
-	
+
 	#task-label {
 		color: $accent;
 		padding-bottom: 1;
 	}
-	
+
 	#task-input {
 		width: 100%;
 	}
-	
+
 	#working-panel {
 		border: solid $warning;
 		padding: 1;
 		margin: 1 0;
 	}
-	
+
 	#completion-panel {
 		border: solid $success;
 		padding: 1;
 		margin: 1 0;
 	}
-	
+
 	#results-container {
 		height: 1fr;
 		overflow: auto;
 		border: none;
 	}
-	
+
 	#results-log {
 		height: auto;
 		overflow-y: scroll;
@@ -395,12 +393,12 @@ class BrowserUseApp(App):
 		color: $text;
 		width: 100%;
 	}
-	
+
 	.log-entry {
 		margin: 0;
 		padding: 0;
 	}
-	
+
 	#browser-info, #model-info, #tasks-info {
 		height: auto;
 		margin: 0;
@@ -1178,7 +1176,11 @@ async def run_prompt_mode(prompt: str, ctx: click.Context, debug: bool = False):
 
 		# Create browser session with config parameters
 		browser_config = config.get('browser', {})
-		browser_session = BrowserSession(stealth=True, **browser_config)
+		browser_session = BrowserSession(
+			stealth=True,
+			user_data_dir=USER_DATA_DIR,
+			**browser_config,
+		)
 
 		# Create and run agent
 		agent = Agent(
@@ -1238,10 +1240,9 @@ async def textual_interface(config: dict[str, Any]):
 
 		# Create BrowserSession directly with config parameters
 		browser_session = BrowserSession(
+			stealth=True,
+			user_data_dir=USER_DATA_DIR,
 			**browser_config,
-			playwright=(await async_playwright().start()),
-			channel=BrowserChannel.CHROME,
-			user_data_dir='~/.browseruse/profiles/default/cli',
 		)
 		logger.debug('BrowserSession initialized successfully')
 
