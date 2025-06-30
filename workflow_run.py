@@ -71,7 +71,7 @@ def resource_path(relative_path):
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-    
+
     return os.path.join(base_path, relative_path)
 
 # meteor version
@@ -140,7 +140,7 @@ def set_websocket_connection(websocket):
 async def send_tool_call_update(action_name, details="", status="in_progress", tab_id=None):
     """
     Sends a browser agent tool call update back to the client with enhanced formatting.
-    
+
     Args:
         action_name: The name of the tool being called
         details: Description of the action being performed
@@ -148,18 +148,18 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
         tab_id: The browser tab ID this action is associated with
     """
     global websocket_connection
-    
+
     if not websocket_connection:
         print(f"⚠️ No WebSocket connection available to send tool call update for {action_name}")
         return
-    
+
     # Use the current tab_id if none provided
     if tab_id is None:
         tab_id = "current"
-    
+
     # Format the details for better readability
     formatted_details = details
-    
+
     # Format specific tool types with cleaner details
     if "click" in action_name.lower():
         if "index" in details:
@@ -178,7 +178,7 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
             query = details.split('"')[1]
             if query:
                 formatted_details = f"Searching for: {query}"
-    
+
     # Create the response with the enhanced tool call information
     response = {
         "type": "browser_agent_tool_call",
@@ -190,7 +190,7 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
         },
         "timestamp": time.time()
     }
-    
+
     # Send the response
     try:
         await websocket_connection.send(json.dumps(response))
@@ -203,17 +203,17 @@ async def send_completion_response(tab_id, result=None):
     Sends a browser agent completion response back to the client with detailed agent results.
     """
     global websocket_connection
-    
+
     if not result:
         result = {}
-    
+
     # Default content
     content = "Task completed successfully"
     success = True
-    
+
     print("====== BROWSER AGENT COMPLETION - DETAILED DEBUG ======")
     print(f"Result type: {type(result)}")
-    
+
     try:
         # Handle cancelled task result
         if isinstance(result, dict) and result.get("cancelled"):
@@ -270,15 +270,15 @@ async def send_completion_response(tab_id, result=None):
                 if len(extracted) > 50:  # Only use if substantial
                     content = extracted
                     print(f"EXTRACTED FROM STRING REPRESENTATION: {content[:100]}...")
-    
+
     except Exception as e:
         print(f"ERROR in extraction: {str(e)}")
         traceback.print_exc()
-    
+
     # Final sanity check - ensure content is a string and not empty
     if not isinstance(content, str) or not content.strip():
         content = "Task completed successfully"
-    
+
     # Create the response with the extracted content
     response = {
         "type": "browser_agent_response",
@@ -289,11 +289,11 @@ async def send_completion_response(tab_id, result=None):
         },
         "timestamp": time.time()
     }
-    
+
     print(f"FINAL CONTENT LENGTH: {len(content)}")
     print(f"CONTENT PREVIEW: {content[:100] + '...' if len(content) > 100 else content}")
     print("====== END BROWSER AGENT COMPLETION DEBUG ======")
-    
+
     # Send the response
     if websocket_connection:
         try:
@@ -324,13 +324,13 @@ async def cleanup_browser_agent_task(tab_id, completed_task):
     """Clean up completed browser agent task"""
     global current_browser_agent_task
     global active_browser_agent_tasks
-    
+
     async with active_browser_agent_tasks_lock:
         # Remove from active tasks
         if tab_id in active_browser_agent_tasks and active_browser_agent_tasks[tab_id] is completed_task:
             del active_browser_agent_tasks[tab_id]
             print(f"Browser agent task for tab {tab_id} completed and cleaned up")
-        
+
         # Clear current task reference if it matches
         if current_browser_agent_task is completed_task:
             current_browser_agent_task = None
@@ -372,19 +372,19 @@ async def handle_websocket(websocket):
                 # Handle browser agent requests with deduplication
                 elif data.get("type") == "browser_agent_request":
                     print("Processing browser agent request")
-                    
+
                     # Extract tab_id for tracking
                     tab_id = data.get("tab_id", "current")
                     prompt = data.get("prompt", "")
                     request_id = data.get("id", str(uuid.uuid4()))
-                    
+
                     # Check if there's already an active task for this tab
                     async with active_browser_agent_tasks_lock:
                         if tab_id in active_browser_agent_tasks:
                             existing_task = active_browser_agent_tasks[tab_id]
                             if existing_task and not existing_task.done():
                                 print(f"Browser agent task already running for tab {tab_id}, ignoring duplicate request")
-                                
+
                                 # Send a response indicating duplicate
                                 await websocket.send(json.dumps({
                                     "status": "duplicate",
@@ -393,26 +393,26 @@ async def handle_websocket(websocket):
                                     "request_id": request_id
                                 }))
                                 continue
-                        
+
                         # Send acknowledgement immediately
                         await websocket.send(json.dumps({
-                            "status": "processing", 
+                            "status": "processing",
                             "message": "Browser agent task started",
                             "tab_id": tab_id,
                             "request_id": request_id
                         }))
-                        
+
                         # Start the task and track it
                         task = asyncio.create_task(main(prompt, tab_id))
                         active_browser_agent_tasks[tab_id] = task
                         current_browser_agent_task = task
-                        
+
                         # Add cleanup callback
                         def task_done_callback(completed_task):
                             asyncio.create_task(cleanup_browser_agent_task(tab_id, completed_task))
-                        
+
                         task.add_done_callback(task_done_callback)
-                
+
                 elif data.get("type") == "regular_chat":
                     print("Processing regular chat message")
                     # Start the main task as a separate task
@@ -458,22 +458,22 @@ async def handle_websocket(websocket):
 # Updated main function with improved cancellation handling and cleanup
 async def main(task_message, tab_id=None):
     global active_browser_agent_tasks
-    
+
     if tab_id is None:
         tab_id = "current"  # Default tab ID if none found
-    
+
     print(f"Running browser agent for tab {tab_id} with task: {task_message[:100]}...")
 
     # Create a closure that captures the current tab_id
     async def tool_call_callback(action_name, details="", status="in_progress"):
-        await send_tool_call_update(action_name, details, status, tab_id) 
-    
+        await send_tool_call_update(action_name, details, status, tab_id)
+
     # Initialize the controller with the callback
     controller = Controller(
         # sends tools over websocket to electron build
         tool_call_callback=tool_call_callback
     )
-    
+
     # Add human intervention action to this controller instance
     @controller.registry.action('Request human intervention')
     async def request_human_intervention(reason: str = "Action requires human intervention") -> ActionResult:
@@ -515,27 +515,27 @@ async def main(task_message, tab_id=None):
         try:
             # Create a special task that periodically checks for cancellation while waiting
             wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
-            
+
             # Wait for resolution with timeout
             done, pending = await asyncio.wait(
                 [wait_event_task],
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=30000  # 8 hour timeout
             )
-            
+
             # Cancel any pending tasks
             for task in pending:
                 task.cancel()
-                
+
             # Check if we timed out (neither task completed)
             if not done:
                 print(f"Timeout waiting for human intervention: {reason}")
                 return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
-                
+
             # Normal completion
             print(f"Human intervention completed for: {reason}")
             return ActionResult(success=True, extracted_content=f"Human intervention completed for: {reason}")
-                
+
         except asyncio.CancelledError:
             print(f"Intervention wait cancelled: {reason}")
             raise
@@ -545,18 +545,18 @@ async def main(task_message, tab_id=None):
         finally:
             if intervention_id in intervention_events:
                 del intervention_events[intervention_id]
-    
+
     # First tool call update to show task starting
     await send_tool_call_update(
-        "browser_agent_start", 
-        f"Starting task: {task_message}", 
+        "browser_agent_start",
+        f"Starting task: {task_message}",
         "in_progress",
         tab_id
     )
 
     # this should work to connect to the available instance
-    browser_session= BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222")
-    
+    browser_session= BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222", stealth=True)
+
     agent = Agent(
         browser_session=browser_session,
         task=task_message,
@@ -564,47 +564,47 @@ async def main(task_message, tab_id=None):
         controller=controller,
         use_vision=True
     )
-    
+
     # Execute the agent's task and capture the result
     try:
         # Store reference to the agent for potential cancellation
         if current_browser_agent_task:
             current_browser_agent_task._agent = agent
-        
+
         # Run the agent with the cancellation checker running in parallel
         result = await agent.run()
-        
+
         # Send completion response back to the client
         await send_completion_response(tab_id, result)
-        
+
         # Log completion
         print(f"Completion response sent to UI for tab {tab_id}")
-        
+
         return result
-        
+
     except Exception as e:
         print(f"Error in browser agent execution: {str(e)}")
         traceback.print_exc()
-        
+
         # Send error response
         try:
             await send_tool_call_update(
-                "browser_agent_error", 
-                f"Error: {str(e)}", 
+                "browser_agent_error",
+                f"Error: {str(e)}",
                 "failed",
                 tab_id
             )
-            
+
             await send_completion_response(tab_id, {
                 "error": True,
                 "message": str(e)
             })
         except Exception as send_error:
             print(f"Error sending error response: {str(send_error)}")
-        
+
         # Let the error propagate
         raise e
-        
+
     finally:
         # Ensure resources are cleaned up
         try:
@@ -614,12 +614,12 @@ async def main(task_message, tab_id=None):
                     await agent.browser_context.close()
                 except Exception as e:
                     print(f"Error closing browser context: {e}")
-                    
+
             # Ensure tab is removed from active tasks
             async with active_browser_agent_tasks_lock:
                 if tab_id in active_browser_agent_tasks:
                     del active_browser_agent_tasks[tab_id]
-                    
+
         except Exception as cleanup_error:
             print(f"Error during cleanup: {cleanup_error}")
 
@@ -627,17 +627,17 @@ async def main(task_message, tab_id=None):
 def install_signal_handlers():
     def signal_handler(sig, frame):
         print(f"Received signal {sig}, initiating shutdown")
-        
+
         # In a real app, you'd want to trigger shutdown of your asyncio loop here
         # But for this example we'll just exit
         if sig == signal.SIGINT or sig == signal.SIGTERM:
             print("Exiting due to signal")
             sys.exit(0)
-    
+
     # Register signals
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # On Windows, SIGBREAK can be sent with Ctrl+Break
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal_handler)

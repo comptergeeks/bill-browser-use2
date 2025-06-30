@@ -948,8 +948,13 @@ class BrowserSession(BaseModel):
 		"""
 		try:
 			await self.browser_context.add_init_script(update_tab_focus_script)
+
 		except Exception as e:
 			self.logger.warning(f'⚠️ Failed to register init script for tab focus detection: {e}')
+
+
+		# set up cursor injection
+
 
 		# Set up visibility listeners for all existing tabs
 		# self.logger.info(f'Setting up visibility listeners for {len(self.browser_context.pages)} pages')
@@ -1291,9 +1296,12 @@ class BrowserSession(BaseModel):
 
 	@require_initialization
 	async def switch_tab(self, tab_index: int) -> Page:
-		pages = self.browser_context.pages
+	    # need to handle this as well
+		pages = get_all_filtered_tabs
 		if not pages or tab_index >= len(pages):
 			raise IndexError('Tab index out of range')
+
+		# this basically needs to be set to the correct page
 		page = pages[tab_index]
 		self.agent_current_page = page
 
@@ -3055,6 +3063,8 @@ class BrowserSession(BaseModel):
 
 	def get_all_filtered_tabs(self) ->  list[Page]:
 		"""Get the first real page from the browser context."""
+
+		# add local urls as well this piece may need to be updated
 		urls_to_filter = [
 			'http://localhost:1212/#/tabs',
 			'http://localhost:1212/',

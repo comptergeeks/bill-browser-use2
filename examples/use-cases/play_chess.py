@@ -313,20 +313,18 @@ async def main():
 
 	agent = Agent(
 		task="""
-        Objective: Play chess against the computer on Lichess and win.
+        Objective: Play chess on Lichess and win.
 
-        Strategy: Play the Queen's Gambit opening (1. d4 d5 2. c4) as White. Aim for a solid, strategic game.
+        Strategy: You are White. Aim for a solid, strategic game.
 
         Instructions:
-        1. Open lichess.org.
-        2. Find and click the button or link with the text "Play with the computer". Use a standard click action.
-        3. On the setup screen, ensure 'White' is selected. Click the "Play" or "Start game" button.
-        4. Use 'Read Chess Board'. This will provide the FEN and a list called 'Legal Moves (SAN)'.
-        5. The 'Legal Moves (SAN)' list will contain moves like 'Nf3' (Knight to f3), 'e4' (pawn to e4), 'O-O' (kingside castle), 'Rxe4+' (Rook captures on e4, giving check), or 'Qh7#' (Queen to h7, checkmate).
-        6. Analyze the FEN, moves, and **you MUST choose your next move EXACTLY as it appears in the 'Legal Moves (SAN)' list.** Do not invent moves or use any other format.
-        7. Use the 'Play Chess Move' action, passing the exact SAN string you chose. For example: `play_move(move='Nf3')` or `play_move(move='Rxe4+')`.
-        8. Repeat steps 4-7 until the game ends. If anything seems wrong, use 'Read Chess Board' again.
-        9. Announce the final result.
+        1. Use 'Read Chess Board'. This will provide the FEN and a list called 'Legal Moves (SAN)'.
+        2. The 'Legal Moves (SAN)' list will contain moves like 'Nf3' (Knight to f3), 'e4' (pawn to e4), 'O-O' (kingside castle), 'Rxe4+' (Rook captures on e4, giving check), or 'Qh7#' (Queen to h7, checkmate).
+        3. Analyze the FEN, moves, and **you MUST choose your next move EXACTLY as it appears in the 'Legal Moves (SAN)' list.** Do not invent moves or use any other format.
+        4. Use the 'Play Chess Move' action, passing the exact SAN string you chose. For example: `play_move(move='Nf3')` or `play_move(move='Rxe4+')`.
+        5. Repeat steps 1-4 until the game ends. If anything seems wrong, use 'Read Chess Board' again.
+        6. Announce the final result.
+
         """,
 		llm=ChatOpenAI(model='gpt-4.1'),
 		controller=controller,
