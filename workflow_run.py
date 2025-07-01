@@ -14,30 +14,64 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, TypeVar, Union
 
-from browser_use.browser.profile import BrowserProfile
-from browser_use.browser.session import BrowserSession
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-# from langchain_groq import ChatGroq
 import websockets
 import platform
 from browser_use import Agent, ActionResult, Browser, BrowserConfig
 from browser_use.controller.service import Controller
 from browser_use.browser.context import BrowserContext
+import socket
+import subprocess
+import importlib.util
+from browser_use.browser.profile import BrowserProfile
+import shutil
+from langchain_openai import ChatOpenAI
+
+
+# Configure logging for detailed output
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout  # Ensure logs go to standard output
+)
+
+# Global flag to track if a kill command has been received
+KILL_AGENT_REQUESTED = False
 
 # Global tracking for active browser agent tasks
 active_browser_agent_tasks = {}  # Track active tasks by tab_id
 active_browser_agent_tasks_lock = asyncio.Lock()  # Lock for thread-safe access
 
-# Load environment variables from .env file
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-load_dotenv(dotenv_path)
+# Load environment variables from the bundled/working directory.
+# Using `resource_path` lets PyInstaller one-file builds locate .env inside the
+# extracted _MEIPASS dir, while plain `python workflow_run.py` still works.
 
+def resource_path(relative_path):
+    """Return absolute path to resource.
 
+    Works for both PyInstaller bundles (where files end up in the temporary
+    `_MEIPASS` directory) and for running from source with `python
+    workflow_run.py` regardless of the current working directory.
+    """
+    try:
+        # When bundled by PyInstaller the files get extracted to a temporary
+        # folder referenced by sys._MEIPASS (added by PyInstaller).  Use that
+        # as base if it exists.
+        base_path = sys._MEIPASS  # type: ignore[attr-defined]
+    except AttributeError:
+        # Running from source – resolve relative to *this* file instead of the
+        # current working directory so that `python anywhere/workflow_run.py`
+        # still finds the resources beside the script.
+        base_path = Path(__file__).resolve().parent
 
+    return str(Path(base_path) / relative_path)
+
+# Now that `resource_path` exists we can safely load the .env file (works both
+# in a PyInstaller bundle and directly from source).
+load_dotenv(resource_path('.env'))
 
 def get_browser_path():
-	    # Get the base directory where the executable is located
+    # Get the base directory where the executable is located
     if getattr(sys, 'frozen', False):
         # If running as bundled executable
         base_dir = os.path.dirname(sys.executable)
@@ -48,80 +82,57 @@ def get_browser_path():
     # Determine path based on operating system
     if platform.system() == "Darwin":  # macOS
         # Check if using system installed app or bundled version
-        system_path = '/Applications/Meteor.app/Contents/MacOS/Meteor'
-        relative_path = os.path.join(base_dir, "Meteor")
+        system_path = '/Applications/Bill-Gates-Browser.app/Contents/MacOS/Bill-Gates-Browser'
+        relative_path = os.path.join(base_dir, "Bill-Gates-Browser")
 
         # Use system path if it exists, otherwise use relative
         if os.path.exists(system_path):
-            return Path(system_path)
+            return system_path
         else:
-            return Path(relative_path)
+            return relative_path
 
     elif platform.system() == "Windows":
         # Windows path - assuming the browser executable is included with your app
-        return Path(os.path.join(base_dir, "Bill-Gates-Browser.exe"))
+        return os.path.join(base_dir, "Bill-Gates-Browser.exe")
 
+    else:  # Linux or other
+        return os.path.join(base_dir, "Bill-Gates-Browser")
 
-
-# Fix resource access for PyInstaller
-def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-# meteor version
-
-
-
-# ### BROWSER OPTIONS
-# browser = Browser(
-#     config=BrowserConfig(
-#         browser_instance_path=get_browser_path(),
-#     )
-# )
-
-browser = Browser(config=BrowserConfig(browser_instance_path=get_browser_path()))
+### BROWSER OPTIONS
+# Connect to an already-running Chromium instance (CDP on localhost:9222).
+# `Browser` is an alias for `BrowserSession`.
+browser = Browser(
+    cdp_url="http://localhost:9222",  # CDP endpoint
+    browser_profile=BrowserProfile(stealth=True),
+)
 
 ### LLM OPTIONS
-# Get API key from environment or use a fallback mechanism
+# Retrieve the key (mainly to force-load the .env file for user feedback); the ChatOpenAI
+# constructor will still fall back to `os.environ['OPENAI_API_KEY']` if we do not pass
+# an explicit `api_key` argument.
+
 openai_api_key = os.environ.get("OPENAI_API_KEY")
+
 if not openai_api_key:
-    print("⚠️ WARNING: OPENAI_API_KEY not found in environment variables")
-    print("Either set it in .env file or provide it explicitly")
+    print("⚠️  OPENAI_API_KEY not found in environment – ChatOpenAI will rely on runtime env var.")
+
+# Build kwargs dynamically: only pass `api_key` if we actually found one; otherwise
+# let the OpenAI client fall back to the environment variable.
+
+llm_kwargs: dict[str, Any] = {
+    "model": "gpt-4.1",
+    # "temperature": 0.7,
+}
+
+if openai_api_key:
+    llm_kwargs["api_key"] = openai_api_key  # type: ignore[arg-type]
 
 try:
-    llm = ChatOpenAI(
-        model="gpt-4.1",
-        api_key=openai_api_key,  # Explicitly pass the API key
-    )
+    llm = ChatOpenAI(**llm_kwargs)  # type: ignore[arg-type]
 except Exception as e:
-    print(f"Error initializing ChatOpenAI: {str(e)}")
-    print("Falling back to a placeholder LLM that will fail gracefully")
-    # Create a minimal placeholder that will fail with better error messages
-    class PlaceholderLLM:
-        def __init__(self):
-            self._verified_api_keys = False
-        async def ainvoke(self, *args, **kwargs):
-            raise ValueError("OpenAI API key not configured correctly. Please check your .env file.")
-        def invoke(self, *args, **kwargs):
-            raise ValueError("OpenAI API key not configured correctly. Please check your .env file.")
-    llm = PlaceholderLLM()
-
-# For the second LLM, also check for API key
-# groq_api_key = os.environ.get("GROQ_API_KEY")
-# try:
-#     llm2 = ChatGroq(
-#         model="meta-llama/llama-4-maverick-17b-128e-instruct",
-#         api_key=groq_api_key,
-#     )
-# except Exception as e:
-#     print(f"Error initializing ChatGroq: {str(e)}")
-#     print("GROQ LLM initialization failed, it will not be available")
+    print(f"❌ Failed to initialise ChatOpenAI: {e}")
+    print("Make sure OPENAI_API_KEY is set (via .env or environment) and accessible at runtime.")
+    sys.exit(1)
 
 ### WEB SOCKET CONNECTION
 websocket_connection = None
@@ -140,7 +151,7 @@ def set_websocket_connection(websocket):
 async def send_tool_call_update(action_name, details="", status="in_progress", tab_id=None):
     """
     Sends a browser agent tool call update back to the client with enhanced formatting.
-
+    
     Args:
         action_name: The name of the tool being called
         details: Description of the action being performed
@@ -148,18 +159,18 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
         tab_id: The browser tab ID this action is associated with
     """
     global websocket_connection
-
+    
     if not websocket_connection:
         print(f"⚠️ No WebSocket connection available to send tool call update for {action_name}")
         return
-
+    
     # Use the current tab_id if none provided
     if tab_id is None:
         tab_id = "current"
-
+    
     # Format the details for better readability
     formatted_details = details
-
+    
     # Format specific tool types with cleaner details
     if "click" in action_name.lower():
         if "index" in details:
@@ -178,7 +189,7 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
             query = details.split('"')[1]
             if query:
                 formatted_details = f"Searching for: {query}"
-
+    
     # Create the response with the enhanced tool call information
     response = {
         "type": "browser_agent_tool_call",
@@ -190,7 +201,7 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
         },
         "timestamp": time.time()
     }
-
+    
     # Send the response
     try:
         await websocket_connection.send(json.dumps(response))
@@ -203,17 +214,17 @@ async def send_completion_response(tab_id, result=None):
     Sends a browser agent completion response back to the client with detailed agent results.
     """
     global websocket_connection
-
+    
     if not result:
         result = {}
-
+    
     # Default content
     content = "Task completed successfully"
     success = True
-
+    
     print("====== BROWSER AGENT COMPLETION - DETAILED DEBUG ======")
     print(f"Result type: {type(result)}")
-
+    
     try:
         # Handle cancelled task result
         if isinstance(result, dict) and result.get("cancelled"):
@@ -270,15 +281,15 @@ async def send_completion_response(tab_id, result=None):
                 if len(extracted) > 50:  # Only use if substantial
                     content = extracted
                     print(f"EXTRACTED FROM STRING REPRESENTATION: {content[:100]}...")
-
+    
     except Exception as e:
         print(f"ERROR in extraction: {str(e)}")
         traceback.print_exc()
-
+    
     # Final sanity check - ensure content is a string and not empty
     if not isinstance(content, str) or not content.strip():
         content = "Task completed successfully"
-
+    
     # Create the response with the extracted content
     response = {
         "type": "browser_agent_response",
@@ -289,11 +300,11 @@ async def send_completion_response(tab_id, result=None):
         },
         "timestamp": time.time()
     }
-
+    
     print(f"FINAL CONTENT LENGTH: {len(content)}")
     print(f"CONTENT PREVIEW: {content[:100] + '...' if len(content) > 100 else content}")
     print("====== END BROWSER AGENT COMPLETION DEBUG ======")
-
+    
     # Send the response
     if websocket_connection:
         try:
@@ -314,23 +325,149 @@ async def end_server():
         await server.close()
         server = None
 
+# =============================================
+# Helper utilities for robust websocket server
+# =============================================
+
+PORT = 8765  # Central place for websocket port configuration
+
+
+def _is_port_in_use(port: int) -> bool:
+    """Return True if a TCP port on localhost is already bound."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("localhost", port)) == 0
+
+
+def _force_kill_process_using_port(port: int):
+    """Best-effort attempt to terminate any process currently listening on *port*.
+
+    On POSIX systems we rely on the `lsof` utility.  On Windows we fall back to
+    `netstat -ano` combined with `taskkill`.  If the necessary helpers are not
+    available we merely log the failure; the caller may decide to proceed and
+    handle the resulting `Address already in use` error.
+    """
+    try:
+        if platform.system() == "Windows":
+            # Capture PID from netstat output
+            result = subprocess.check_output(
+                ["netstat", "-ano", "-p", "tcp"], text=True, stderr=subprocess.DEVNULL
+            )
+            for line in result.splitlines():
+                if f"0.0.0.0:{port}" in line or f"127.0.0.1:{port}" in line or f"[::]:{port}" in line:
+                    parts = line.split()
+                    pid = parts[-1]
+                    if pid.isdigit():
+                        subprocess.call(["taskkill", "/PID", pid, "/F", "/T"])
+                        print(f"🔪  Killed process {pid} using port {port}")
+        else:
+            # macOS / Linux path using lsof
+            result = subprocess.check_output(["lsof", "-t", f"-i:{port}"]).decode().strip()
+            if result:
+                for pid in result.split("\n"):
+                    if pid:
+                        os.kill(int(pid), signal.SIGTERM)
+                        print(f"🔪  Killed process {pid} using port {port}")
+    except subprocess.CalledProcessError:
+        # No process found on port
+        pass
+    except FileNotFoundError:
+        print("⚠️  Platform tools for forced-kill (lsof / taskkill) not available.")
+    except Exception as e:
+        print(f"⚠️  Unexpected error when killing port {port}: {e}")
+
+
+async def _gracefully_close_existing_server(port: int):
+    """Attempt to connect to an already running websocket server on *port* and
+    request a graceful shutdown via the `end_connection` control message.
+    """
+    try:
+        async with websockets.connect(f"ws://localhost:{port}") as ws:
+            await ws.send(json.dumps({"type": "end_connection"}))
+            print("ℹ️  Requested graceful shutdown of existing websocket server")
+            # Give it a moment to release the socket
+            await asyncio.sleep(1)
+    except (ConnectionRefusedError, OSError, websockets.InvalidURI):
+        # Nothing is listening yet – nothing to do
+        pass
+    except Exception as e:
+        print(f"⚠️  Could not gracefully close existing server on port {port}: {e}")
+
+
+async def ensure_port_available(port: int = PORT):
+    """Ensure *port* is free for binding.  If another process is holding the port
+    we first attempt a graceful shutdown; failing that we forcibly terminate
+    the process.
+    """
+    if not _is_port_in_use(port):
+        return  # Port already free
+
+    # Try graceful shutdown through websocket control channel
+    await _gracefully_close_existing_server(port)
+
+    # Give the OS a moment to recycle the socket
+    await asyncio.sleep(0.5)
+
+    if _is_port_in_use(port):
+        print(f"⚠️  Port {port} still busy after graceful attempt — forcing kill")
+        _force_kill_process_using_port(port)
+
+        # Final short wait; if still busy we will let the bind attempt fail and
+        # propagate the error.
+        await asyncio.sleep(0.5)
+
 async def start_server():
+    """Start the websocket server, guaranteeing the desired port is available.
+
+    This helper makes repeated attempts to free the port by (1) sending an
+    `end_connection` control message to any existing Browser-Use websocket
+    instance, (2) forcibly killing the owning process if necessary.  This makes
+    the executable far more robust when relaunched multiple times or if a
+    previous instance crashed and left the port in `TIME_WAIT`.
+    """
     global server
-    server = await websockets.serve(handle_websocket, "localhost", 8765)
-    print("Server running on ws://localhost:8765")
+
+    await ensure_port_available(PORT)
+
+    retries = 3
+    delay = 1
+    for attempt in range(1, retries + 1):
+        try:
+            server = await websockets.serve(handle_websocket, "localhost", PORT)
+            print(f"✅ Server running on ws://localhost:{PORT}")
+            break
+        except OSError as e:
+            if e.errno == 48 or "address already in use" in str(e).lower():
+                print(f"⚠️  Port {PORT} still in use (attempt {attempt}/{retries}). Retrying in {delay}s…")
+                await asyncio.sleep(delay)
+                continue
+            raise
+    else:
+        raise RuntimeError(f"Unable to start websocket server on port {PORT} after {retries} attempts")
+
     await server.wait_closed()
+
+
+# ----------------------------------------------------------
+#  Runtime restart endpoint (for use by external supervisors)
+# ----------------------------------------------------------
+
+async def restart_server():
+    """Gracefully restart the websocket server in-process."""
+    await end_server()
+    await start_server()
 
 async def cleanup_browser_agent_task(tab_id, completed_task):
     """Clean up completed browser agent task"""
     global current_browser_agent_task
     global active_browser_agent_tasks
-
+    
     async with active_browser_agent_tasks_lock:
         # Remove from active tasks
         if tab_id in active_browser_agent_tasks and active_browser_agent_tasks[tab_id] is completed_task:
             del active_browser_agent_tasks[tab_id]
             print(f"Browser agent task for tab {tab_id} completed and cleaned up")
-
+        
         # Clear current task reference if it matches
         if current_browser_agent_task is completed_task:
             current_browser_agent_task = None
@@ -338,6 +475,7 @@ async def cleanup_browser_agent_task(tab_id, completed_task):
 async def handle_websocket(websocket):
     global intervention_events
     global current_browser_agent_task
+    global KILL_AGENT_REQUESTED
     global active_browser_agent_tasks
 
     print(f"New websocket connection established from: {websocket.remote_address}")
@@ -369,22 +507,122 @@ async def handle_websocket(websocket):
                     print("Received end_connection request")
                     asyncio.create_task(end_server())
 
+                elif data.get("type") == "restart_server":
+                    print("Received restart_server request – restarting websocket server")
+                    asyncio.create_task(restart_server())
+
+                elif data.get("type") == "kill_agent":
+                    print("*** KILL AGENT REQUEST RECEIVED ***")
+                    
+                    # Set global flag to indicate kill request
+                    KILL_AGENT_REQUESTED = True
+                    
+                    # Cancel all active browser agent tasks
+                    async with active_browser_agent_tasks_lock:
+                        tasks_to_cancel = list(active_browser_agent_tasks.items())
+                    
+                    cancelled_count = 0
+                    for tab_id, task in tasks_to_cancel:
+                        if task and not task.done():
+                            try:
+                                # Try to stop the agent gracefully first
+                                if hasattr(task, '_agent') and task._agent:
+                                    print("Setting agent stopped flag")
+                                    task._agent.state.stopped = True
+                                    
+                                    # Force immediate cancellation of any ongoing browser operations
+                                    if hasattr(task._agent, 'browser_context') and task._agent.browser_context:
+                                        try:
+                                            print("Attempting to stop browser operations")
+                                            page = await task._agent.browser_context.get_current_page()
+                                            await page.evaluate('window.stop()')
+                                        except Exception as e:
+                                            print(f"Error stopping page operations: {e}")
+                                    
+                                    # Force high failure count to trigger exit condition
+                                    try:
+                                        task._agent.state.consecutive_failures = 999
+                                    except Exception as e:
+                                        print(f"Error setting high failure count: {e}")
+                                    
+                                    # Call the stop method which includes resource cleanup
+                                    try:
+                                        await task._agent.stop()
+                                    except Exception as e:
+                                        print(f"Error calling agent.stop(): {e}")
+                                
+                                # Cancel the task at asyncio level
+                                print(f"Cancelling task for tab {tab_id}")
+                                task.cancel()
+                                cancelled_count += 1
+                                
+                                # Wait briefly for the cancellation to take effect
+                                await asyncio.sleep(0.5)
+                                
+                                # Send cancellation notification to UI for immediate feedback
+                                await send_tool_call_update(
+                                    "browser_agent_cancelled", 
+                                    "Task was cancelled by user request", 
+                                    "cancelled",
+                                    tab_id
+                                )
+                                
+                                # Send completion response indicating cancellation
+                                await send_completion_response(tab_id, {
+                                    "cancelled": True,
+                                    "message": "Task was cancelled by user"
+                                })
+                                
+                            except Exception as e:
+                                print(f"Error cancelling task for tab {tab_id}: {e}")
+                    
+                    # Clear all tasks
+                    async with active_browser_agent_tasks_lock:
+                        active_browser_agent_tasks.clear()
+                    
+                    # Clear current task reference
+                    current_browser_agent_task = None
+                    
+                    # Force browser to close if tasks are still running
+                    if cancelled_count > 0:
+                        try:
+                            if browser and hasattr(browser, 'browser') and browser.browser:
+                                await browser.browser.close()
+                                print("Forcibly closed browser")
+                        except Exception as e:
+                            print(f"Error forcibly closing browser: {e}")
+                    
+                    # Send final response
+                    if cancelled_count > 0:
+                        await websocket.send(json.dumps({
+                            "status": "ok", 
+                            "message": f"Agent task cancelled successfully ({cancelled_count} tasks)"
+                        }))
+                    else:
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "message": "No active agent task to kill"
+                        }))
+
                 # Handle browser agent requests with deduplication
                 elif data.get("type") == "browser_agent_request":
                     print("Processing browser agent request")
-
+                    
+                    # Reset kill flag for new requests
+                    KILL_AGENT_REQUESTED = False
+                    
                     # Extract tab_id for tracking
                     tab_id = data.get("tab_id", "current")
                     prompt = data.get("prompt", "")
                     request_id = data.get("id", str(uuid.uuid4()))
-
+                    
                     # Check if there's already an active task for this tab
                     async with active_browser_agent_tasks_lock:
                         if tab_id in active_browser_agent_tasks:
                             existing_task = active_browser_agent_tasks[tab_id]
                             if existing_task and not existing_task.done():
                                 print(f"Browser agent task already running for tab {tab_id}, ignoring duplicate request")
-
+                                
                                 # Send a response indicating duplicate
                                 await websocket.send(json.dumps({
                                     "status": "duplicate",
@@ -393,26 +631,26 @@ async def handle_websocket(websocket):
                                     "request_id": request_id
                                 }))
                                 continue
-
+                        
                         # Send acknowledgement immediately
                         await websocket.send(json.dumps({
-                            "status": "processing",
+                            "status": "processing", 
                             "message": "Browser agent task started",
                             "tab_id": tab_id,
                             "request_id": request_id
                         }))
-
+                        
                         # Start the task and track it
                         task = asyncio.create_task(main(prompt, tab_id))
                         active_browser_agent_tasks[tab_id] = task
                         current_browser_agent_task = task
-
+                        
                         # Add cleanup callback
                         def task_done_callback(completed_task):
                             asyncio.create_task(cleanup_browser_agent_task(tab_id, completed_task))
-
+                        
                         task.add_done_callback(task_done_callback)
-
+                
                 elif data.get("type") == "regular_chat":
                     print("Processing regular chat message")
                     # Start the main task as a separate task
@@ -455,25 +693,54 @@ async def handle_websocket(websocket):
         if websocket_connection == websocket:
             set_websocket_connection(None)
 
+# Enhanced cancellation check mechanism
+async def check_cancellation():
+    """A periodic check that needs to be run alongside the agent task to detect cancellation"""
+    global KILL_AGENT_REQUESTED
+    
+    try:
+        # Continue checking until cancellation is requested or task completes
+        while True:
+            # If kill was requested through the global flag
+            if KILL_AGENT_REQUESTED:
+                print("Cancellation check detected kill request")
+                raise asyncio.CancelledError("Kill requested")
+            
+            # Brief sleep to avoid CPU thrashing
+            await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        # Allow cancellation of this check task itself
+        print("Cancellation check task itself was cancelled")
+        raise
+    except Exception as e:
+        print(f"Error in cancellation check: {e}")
+        raise
+
 # Updated main function with improved cancellation handling and cleanup
 async def main(task_message, tab_id=None):
+    global KILL_AGENT_REQUESTED
     global active_browser_agent_tasks
-
+    
+    # Reset kill flag at start of new task
+    KILL_AGENT_REQUESTED = False
+    
     if tab_id is None:
         tab_id = "current"  # Default tab ID if none found
-
+    
     print(f"Running browser agent for tab {tab_id} with task: {task_message[:100]}...")
 
     # Create a closure that captures the current tab_id
     async def tool_call_callback(action_name, details="", status="in_progress"):
+        # Check for cancellation before sending updates
+        if KILL_AGENT_REQUESTED:
+            raise asyncio.CancelledError("Kill requested during tool call")
         await send_tool_call_update(action_name, details, status, tab_id)
-
+    
     # Initialize the controller with the callback
     controller = Controller(
-        # sends tools over websocket to electron build
         tool_call_callback=tool_call_callback
     )
-
+    
     # Add human intervention action to this controller instance
     @controller.registry.action('Request human intervention')
     async def request_human_intervention(reason: str = "Action requires human intervention") -> ActionResult:
@@ -486,7 +753,11 @@ async def main(task_message, tab_id=None):
         Returns:
             ActionResult indicating success after human intervention completes
         """
-        global websocket_connection, intervention_events
+        global websocket_connection, intervention_events, KILL_AGENT_REQUESTED
+
+        # Check for cancellation first
+        if KILL_AGENT_REQUESTED:
+            return ActionResult(success=False, extracted_content="Operation cancelled by user")
 
         intervention_id = str(uuid.uuid4())
         intervention_events[intervention_id] = asyncio.Event()
@@ -515,27 +786,32 @@ async def main(task_message, tab_id=None):
         try:
             # Create a special task that periodically checks for cancellation while waiting
             wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
-
+            cancel_check_task = asyncio.create_task(check_cancellation())
+            
             # Wait for resolution with timeout
             done, pending = await asyncio.wait(
-                [wait_event_task],
+                [wait_event_task, cancel_check_task],
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=30000  # 8 hour timeout
             )
-
+            
             # Cancel any pending tasks
             for task in pending:
                 task.cancel()
-
+                
+            # Check if we completed due to kill request
+            if KILL_AGENT_REQUESTED:
+                raise asyncio.CancelledError("Kill requested during intervention wait")
+                
             # Check if we timed out (neither task completed)
             if not done:
                 print(f"Timeout waiting for human intervention: {reason}")
                 return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
-
+                
             # Normal completion
             print(f"Human intervention completed for: {reason}")
             return ActionResult(success=True, extracted_content=f"Human intervention completed for: {reason}")
-
+                
         except asyncio.CancelledError:
             print(f"Intervention wait cancelled: {reason}")
             raise
@@ -545,99 +821,173 @@ async def main(task_message, tab_id=None):
         finally:
             if intervention_id in intervention_events:
                 del intervention_events[intervention_id]
-
+    
     # First tool call update to show task starting
     await send_tool_call_update(
-        "browser_agent_start",
-        f"Starting task: {task_message}",
+        "browser_agent_start", 
+        f"Starting task: {task_message}", 
         "in_progress",
         tab_id
     )
+    
+    # Prepare a browser session for the agent
+    browser_session = browser  # 'browser' is already a BrowserSession alias
+    # Optionally start the session here to warm up; the Agent will start it lazily if not
+    # await browser_session.start()
 
-    # this should work to connect to the available instance
-    browser_session= BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222", stealth=True)
-
+    # Create the agent using the existing browser session
     agent = Agent(
-        browser_session=browser_session,
         task=task_message,
         llm=llm,
         controller=controller,
-        use_vision=True
+        browser_session=browser_session,
     )
-
+    
     # Execute the agent's task and capture the result
     try:
-        # Store reference to the agent for potential cancellation
-        if current_browser_agent_task:
-            current_browser_agent_task._agent = agent
-
-        # Run the agent with the cancellation checker running in parallel
-        result = await agent.run()
-
-        # Send completion response back to the client
-        await send_completion_response(tab_id, result)
-
-        # Log completion
-        print(f"Completion response sent to UI for tab {tab_id}")
-
-        return result
-
+        # Create a cancellation check that runs alongside the agent
+        cancel_check_task = asyncio.create_task(check_cancellation())
+        
+        try:
+            # Store reference to the agent for potential cancellation
+            if current_browser_agent_task:
+                current_browser_agent_task._agent = agent
+            
+            # Run the agent with the cancellation checker running in parallel
+            result = await asyncio.shield(agent.run())
+            
+            # Send completion response back to the client
+            await send_completion_response(tab_id, result)
+            
+            # Log completion
+            print(f"Completion response sent to UI for tab {tab_id}")
+            
+            return result
+            
+        finally:
+            # Always cancel the checker when done
+            if cancel_check_task and not cancel_check_task.done():
+                cancel_check_task.cancel()
+                try:
+                    await cancel_check_task
+                except asyncio.CancelledError:
+                    pass
+    
+    except asyncio.CancelledError:
+        # Specifically handle task cancellation
+        print(f"Task cancelled for tab {tab_id}")
+        
+        # Ensure agent is fully stopped
+        agent.state.stopped = True
+        
+        # Set high failure count to force termination of agent's step loop
+        agent.state.consecutive_failures = 999
+        
+        # Send cancellation notification
+        await send_tool_call_update(
+            "browser_agent_cancelled", 
+            "Task was cancelled by user request", 
+            "cancelled",
+            tab_id
+        )
+        
+        # Send a completion response that indicates cancellation
+        await send_completion_response(tab_id, {
+            "cancelled": True,
+            "message": "Task was cancelled by user"
+        })
+        
+        # Return a cancelled result
+        return {"cancelled": True, "message": "Task was cancelled"}
+        
     except Exception as e:
         print(f"Error in browser agent execution: {str(e)}")
         traceback.print_exc()
-
+        
         # Send error response
         try:
             await send_tool_call_update(
-                "browser_agent_error",
-                f"Error: {str(e)}",
+                "browser_agent_error", 
+                f"Error: {str(e)}", 
                 "failed",
                 tab_id
             )
-
+            
             await send_completion_response(tab_id, {
                 "error": True,
                 "message": str(e)
             })
         except Exception as send_error:
             print(f"Error sending error response: {str(send_error)}")
-
+        
         # Let the error propagate
         raise e
-
+        
     finally:
         # Ensure resources are cleaned up
         try:
+            # Clear kill flag
+            KILL_AGENT_REQUESTED = False
+            
             # Clean up agent resources
             if agent.browser_context:
                 try:
                     await agent.browser_context.close()
                 except Exception as e:
                     print(f"Error closing browser context: {e}")
-
+                    
             # Ensure tab is removed from active tasks
             async with active_browser_agent_tasks_lock:
                 if tab_id in active_browser_agent_tasks:
                     del active_browser_agent_tasks[tab_id]
-
+                    
         except Exception as cleanup_error:
             print(f"Error during cleanup: {cleanup_error}")
+
+# Enhanced stop method for Agent class
+async def stop(self):
+    """Stop the agent more aggressively"""
+    print('⏹️ Agent stopping')
+    self.state.stopped = True
+    
+    # Force high failure count to trigger exit condition
+    self.state.consecutive_failures = 999
+    
+    # Try to clean up browser resources immediately
+    if hasattr(self, 'browser_context') and self.browser_context:
+        try:
+            # Try to stop any ongoing browser operations
+            page = await self.browser_context.get_current_page()
+            await page.evaluate('window.stop()')
+        except Exception as e:
+            print(f"Error stopping page: {e}")
+        
+        # Close the browser context
+        try:
+            await self.browser_context.close()
+        except Exception as e:
+            print(f"Error closing browser context: {e}")
+
+# Monkey patch the Agent.stop method to use our enhanced version
+Agent.stop = stop
 
 # Install signal handlers for graceful termination
 def install_signal_handlers():
     def signal_handler(sig, frame):
         print(f"Received signal {sig}, initiating shutdown")
-
+        global KILL_AGENT_REQUESTED
+        KILL_AGENT_REQUESTED = True
+        
         # In a real app, you'd want to trigger shutdown of your asyncio loop here
         # But for this example we'll just exit
         if sig == signal.SIGINT or sig == signal.SIGTERM:
             print("Exiting due to signal")
             sys.exit(0)
-
+    
     # Register signals
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-
+    
     # On Windows, SIGBREAK can be sent with Ctrl+Break
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal_handler)
@@ -645,10 +995,60 @@ def install_signal_handlers():
 # Install signal handlers at startup
 install_signal_handlers()
 
+# --------------------------------------------------
+# Ensure Patchright (stealth mode) can find a Node.js binary.
+# It will look at the PATCHRIGHT_NODE env var first.
+# We try, in order:
+#   1. Existing env var
+#   2. `node` in the user PATH
+#   3. The bundled Patchright driver (if available)
+# --------------------------------------------------
+
+def _ensure_patchright_node():
+    if os.environ.get("PATCHRIGHT_NODE"):
+        return  # already set by user / env
+
+    # 1. System-wide node
+    sys_node = shutil.which("node")
+    if sys_node:
+        os.environ["PATCHRIGHT_NODE"] = sys_node
+        return
+
+    # 2. Bundled driver inside Patchright package
+    try:
+        import patchright  # imported lazily only if installed
+
+        driver_path = Path(patchright.__file__).parent / "driver" / "node"
+        if driver_path.exists():
+            os.environ["PATCHRIGHT_NODE"] = str(driver_path)
+            return
+    except ImportError:
+        pass
+
+    # 3. Last resort: warn – Patchright will fail without Node
+    print(
+        "⚠️  Could not locate a Node.js binary for Patchright. "
+        "Stealth mode may fail unless Node is installed or bundled."
+    )
+
+
+_ensure_patchright_node()
+
 # Run the websocket server
 if __name__ == "__main__":
     try:
-        asyncio.run(start_server())
+        # Allow command-line argument to restart the websocket server on PORT.
+        # Usage examples:
+        #   python workflow_run.py restart
+        #   ./workflow_run --restart
+        # Without arguments the standard server is launched.
+
+        if len(sys.argv) > 1 and sys.argv[1].lower() in {"restart", "--restart", "-r"}:
+            print("🔄  Restart flag detected – restarting websocket server…")
+            asyncio.run(restart_server())
+        else:
+            asyncio.run(start_server())
+
     except KeyboardInterrupt:
         print("Server shutdown requested via KeyboardInterrupt")
     finally:

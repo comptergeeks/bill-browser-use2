@@ -43,9 +43,9 @@ class Controller(Generic[Context]):
 		self,
 		exclude_actions: list[str] = [],
 		output_model: type[BaseModel] | None = None,
-		tool_call_callback=None, 
+		tool_call_callback=None,
 	):
-		self.tool_call_callback = tool_call_callback # need this  
+		self.tool_call_callback = tool_call_callback # need this
 		self.registry = Registry[Context](exclude_actions)
 
 		"""Register all default browser actions"""
@@ -84,6 +84,8 @@ class Controller(Generic[Context]):
 			'Search the query in Google, the query should be a search query like humans search in Google, concrete and not vague or super long.',
 			param_model=SearchGoogleAction,
 		)
+
+		# need to fix this function
 		async def search_google(params: SearchGoogleAction, browser_session: BrowserSession):
 			search_url = f'https://www.google.com/search?q={params.query}&udm=14'
 
@@ -98,6 +100,8 @@ class Controller(Generic[Context]):
 			logger.info(msg)
 			return ActionResult(extracted_content=msg, include_in_memory=True)
 
+
+		# update this as well
 		@self.registry.action('Navigate to URL in the current tab', param_model=GoToUrlAction)
 		async def go_to_url(params: GoToUrlAction, browser_session: BrowserSession):
 			page = await browser_session.get_current_page()
@@ -200,7 +204,7 @@ class Controller(Generic[Context]):
 			await browser_session.switch_to_tab(params.page_id)
 			# Wait for tab to be ready and ensure references are synchronized
 			page = await browser_session.get_current_page()
-			await page.wait_for_load_state()
+			success = await page.evaluate(f'window.switchTab("{params.page_id}")')
 			msg = f'🔄  Switched to tab {params.page_id}'
 			logger.info(msg)
 			return ActionResult(extracted_content=msg, include_in_memory=True)
@@ -208,6 +212,7 @@ class Controller(Generic[Context]):
 		@self.registry.action('Open a specific url in new tab', param_model=OpenTabAction)
 		async def open_tab(params: OpenTabAction, browser_session: BrowserSession):
 			page = await browser_session.get_current_page()
+			# create newTab needs to use open url
 			await page.evaluate(f'window.createNewTab("{params.url}", true)')
 			msg = f'🔗  Opened new tab with {params.url}'
 			logger.info(msg)
@@ -878,8 +883,8 @@ class Controller(Generic[Context]):
 				# 	},
 				# 	span_type='TOOL',
 				# ):
-			
-				
+
+
 				if params is not None:
 				# Notify about tool call starting via callback if it exists
 					if hasattr(self, 'tool_call_callback') and self.tool_call_callback:
@@ -894,7 +899,7 @@ class Controller(Generic[Context]):
 							)
 						except Exception as e:
 							logger.debug(f"Failed to send tool call update: {e}")
-				
+
 					result = await self.registry.execute_action(
 						action_name=action_name,
 						params=params,

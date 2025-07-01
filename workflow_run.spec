@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = [('.env', '.'), ('browser_use', 'browser_use')]
+datas += collect_data_files('patchright')
 
 
 a = Analysis(
     ['workflow_run.py'],
     pathex=[],
     binaries=[],
-    datas=[('.env', '.'), ('browser_use', 'browser_use')],
+    datas=datas,
     hiddenimports=['pydantic.deprecated.decorator'],
     hookspath=[],
     hooksconfig={},

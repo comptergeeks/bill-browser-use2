@@ -76,12 +76,12 @@ except Exception as e:
 
 
 async def main():
-	task = 'Act as an evil villain. Have a convseration with the chatbot on screen. make sure to go back and forth multiple times open a new tab for it.'
+	task = 'go to pokemon showdown .'
 	controller = Controller()
-	
+
 	# this should work to connect to the available instance
 	browser_session= BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222")
-	
+
 	agent = Agent(
 		browser_session=browser_session,
 		task=task,

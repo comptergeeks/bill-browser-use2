@@ -1189,22 +1189,12 @@ class BrowserSession(BaseModel):
 
 
 
-		urls_to_filter = [
-			'http://localhost:1212/#/tabs',
-			'http://localhost:1212/',
-			'http://localhost:1212/#/sidebar',
-		]
-
 		browser_filtered_pages = []
 		for idx, page in enumerate(self.browser_context.pages):
 			url = page.url
-			# Filter out internal URLs
-			if url in urls_to_filter:
+			# Use unified filtering logic
+			if self._should_filter_internal_url(url):
 				print(f"Filtering out internal URL at index {idx}: {url}")
-				continue
-			# Filter out data URLs that look like UI elements
-			if url.startswith('data:text/html') and 'suggestion-item' in url:
-				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
 				continue
 			browser_filtered_pages.append(page)
 
@@ -1212,6 +1202,8 @@ class BrowserSession(BaseModel):
 
 
 		first_real_page = browser_filtered_pages[0]
+
+		print("first_real_page: ", first_real_page)
 		# this should return the active human and agent page and then we can just match the urls to the ones present in the browser_context.pages and then apply
 
 		data = await first_real_page.evaluate('async () => { return await window.currentPage(); }')
@@ -1231,58 +1223,6 @@ class BrowserSession(BaseModel):
 				break
 
 		return self.agent_current_page
-		# ai page and human page need to be created
-
-
-
-
-
-
-
-
-		# i think I need to get the current page from the ai state function
-		# need to
-
-		# for page in self.browser_context.pages:
-		# 	if page.url == aiCurrentPageTab['url']:
-		# 		self.agent_current_page = page
-		# 		break
-
-
-
-
-		# there is an ai state funciton, get the url from there and then match it to the browser_context.pages
-
-
-
-
-		# if either focused page is closed, clear it so we dont use a dead object
-		# if (not self.human_current_page) or self.human_current_page.is_closed():
-		# 	self.human_current_page = None
-		# if (not self.agent_current_page) or self.agent_current_page.is_closed():
-		# 	self.agent_current_page = None
-
-		# # if either one is None, fallback to using the other one for both
-		# self.agent_current_page = self.agent_current_page or self.human_current_page or None
-		# self.human_current_page = self.human_current_page or self.agent_current_page or None
-
-		# # if both are still None, fallback to using the first open tab we can find
-		# if self.agent_current_page is None:
-		# 	if self.browser_context.pages:
-		# 		first_available_tab = self.browser_context.pages[0]
-		# 		self.agent_current_page = first_available_tab
-		# 		self.human_current_page = first_available_tab
-		# 	else:
-		# 		# if all tabs are closed, open a new one
-		# 		new_tab = await self.create_new_tab()
-		# 		self.agent_current_page = new_tab
-		# 		self.human_current_page = new_tab
-		# assert self.agent_current_page is not None, f'{self} Failed to find or create a new page for the agent'
-		# assert self.human_current_page is not None, f'{self} Failed to find or create a new page for the human'
-		# print(f'agent_current_page: {self.agent_current_page}')
-
-
-		return self.agent_current_page
 
 	@property
 	def tabs(self) -> list[Page]:
@@ -1297,7 +1237,7 @@ class BrowserSession(BaseModel):
 	@require_initialization
 	async def switch_tab(self, tab_index: int) -> Page:
 	    # need to handle this as well
-		pages = get_all_filtered_tabs
+		pages = self.get_all_filtered_tabs()
 		if not pages or tab_index >= len(pages):
 			raise IndexError('Tab index out of range')
 
@@ -1428,34 +1368,14 @@ class BrowserSession(BaseModel):
 
 		# with tabs info
 
-		# let's filter browser_context.pages --> and see if the state will match
-
-		# Define the URL prefixes to filter out
-		# the issue is that the tabs will not align...
-		urls_to_filter_prefixes = [
-			'http://localhost:1212/#/tabs',
-			'http://localhost:1212/#/sidebar',
-			'http://localhost:1212/index.html',
-			'http://localhost:1212/',  # Catches the root
-		]
-
-
-		# maybe what's more efficient is to break after I hit the first element that is real, and then use that as the first page
-		# for now this works
+		# Filter pages to exclude internal browser-use UI pages
 		browser_filtered_pages = []
 		for idx, page in enumerate(self.browser_context.pages):
 			url = page.url
-
-			# Filter out data URLs that are internal UI
-			if url.startswith('data:text/html') or ('suggestion-item' in url or 'No suggestions found' in url):
-				print(f"Filtering out data UI tab at index {idx}: {url[:100]}...")
-				continue
-
-			# Filter out internal localhost URLs by prefix
-			if any(url.startswith(prefix) for prefix in urls_to_filter_prefixes):
+			# Use unified filtering logic
+			if self._should_filter_internal_url(url):
 				print(f"Filtering out internal URL at index {idx}: {url}")
 				continue
-
 			browser_filtered_pages.append(page)
 
 		if not browser_filtered_pages:
@@ -3062,50 +2982,54 @@ class BrowserSession(BaseModel):
 		}""")
 
 	def get_all_filtered_tabs(self) ->  list[Page]:
-		"""Get the first real page from the browser context."""
-
-		# add local urls as well this piece may need to be updated
-		urls_to_filter = [
-			'http://localhost:1212/#/tabs',
-			'http://localhost:1212/',
-			'http://localhost:1212/#/sidebar',
-		]
+		"""Get all real pages from the browser context, filtering out internal UI pages."""
 
 		browser_filtered_pages = []
 		for idx, page in enumerate(self.browser_context.pages):
 			url = page.url
-			# Filter out internal URLs
-			if url in urls_to_filter:
+			# Use unified filtering logic
+			if self._should_filter_internal_url(url):
 				print(f"Filtering out internal URL at index {idx}: {url}")
-				continue
-			# Filter out data URLs that look like UI elements
-			if url.startswith('data:text/html') and 'suggestion-item' in url:
-				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
 				continue
 			browser_filtered_pages.append(page)
 
 		return browser_filtered_pages
 
 	def get_first_real_page(self) ->  Page:
-		"""Get the first real page from the browser context."""
-		urls_to_filter = [
-			'http://localhost:1212/#/tabs',
-			'http://localhost:1212/',
-			'http://localhost:1212/#/sidebar',
-		]
-		# this function just needs to return the first page, not itereate through all of them
-		first_real_page = None
+		"""Get the first real page from the browser context, filtering out internal UI pages."""
+		# Find the first page that isn't an internal UI page
 		for idx, page in enumerate(self.browser_context.pages):
 			url = page.url
-			# Filter out internal URLs
-			if url in urls_to_filter:
+			# Use unified filtering logic
+			if self._should_filter_internal_url(url):
 				print(f"Filtering out internal URL at index {idx}: {url}")
-				continue
-			# Filter out data URLs that look like UI elements
-			elif url.startswith('data:text/html') or 'suggestion-item' in url:
-				print(f"Filtering out suggestion UI tab at index {idx}: {url[:100]}...")
 				continue
 			else:
 				return page
-		# if the first case is never hit, then we return the first page of the context
+		# if no real pages found, return the first page of the context as fallback
 		return self.browser_context.pages[0]
+
+	# Add helper method for consistent URL filtering
+	def _should_filter_internal_url(self, url: str) -> bool:
+		"""
+		Check if a URL should be filtered out as an internal browser-use interface URL.
+		Uses startswith matching to catch URLs with query parameters.
+		"""
+		# Internal URLs to filter out (UI components that should not be visible to the agent)
+		internal_url_prefixes = [
+			'http://localhost:1212/#/tabs',
+			'http://localhost:1212/#/sidebar', 
+			'http://localhost:1212/index.html',
+		]
+		
+		# Special case: filter root URL but allow specific routes like #/landing
+		if url == 'http://localhost:1212/' or url == 'http://localhost:1212':
+			return True
+		
+		# Filter out data URLs that are internal UI
+		if url.startswith('data:text/html'):
+			if 'suggestion-item' in url or 'No suggestions found' in url:
+				return True
+		
+		# Filter out internal localhost URLs by prefix
+		return any(url.startswith(prefix) for prefix in internal_url_prefixes)
