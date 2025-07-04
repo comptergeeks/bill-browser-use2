@@ -36,6 +36,10 @@ setup_logging()
 # Global flag to track if a kill command has been received
 KILL_AGENT_REQUESTED = False
 
+# Tab-specific kill requests tracking
+tab_kill_requests = set()  # Track which tab_ids have kill requests
+tab_kill_requests_lock = asyncio.Lock()  # Lock for thread-safe access
+
 # Global tracking for active browser agent tasks
 active_browser_agent_tasks = {}  # Track active tasks by tab_id
 active_browser_agent_tasks_lock = asyncio.Lock()  # Lock for thread-safe access
@@ -168,27 +172,8 @@ async def send_tool_call_update(action_name, details="", status="in_progress", t
     if tab_id is None:
         tab_id = "current"
     
-    # Format the details for better readability
+    # Use the details as provided by the controller (already formatted)
     formatted_details = details
-    
-    # Format specific tool types with cleaner details
-    if "click" in action_name.lower():
-        if "index" in details:
-            # Extract the index and text if available
-            parts = details.split(":")
-            if len(parts) > 1:
-                formatted_details = f"Clicking element: {parts[1].strip()}"
-            else:
-                formatted_details = "Clicking interface element"
-    elif "input_text" in action_name.lower():
-        # For text inputs, simplify the message and protect privacy
-        formatted_details = "Typing text into form field"
-    elif "search_google" in action_name.lower():
-        # For search queries, highlight the query text
-        if "Searched for" in details and '"' in details:
-            query = details.split('"')[1]
-            if query:
-                formatted_details = f"Searching for: {query}"
     
     # Create the response with the enhanced tool call information
     response = {
@@ -512,52 +497,96 @@ async def handle_websocket(websocket):
                     asyncio.create_task(restart_server())
 
                 elif data.get("type") == "kill_agent":
-                    print("*** KILL AGENT REQUEST RECEIVED ***")
+                    target_tab_id = data.get("tab_id")  # Optional - if provided, only kill this specific task
                     
-                    # Set global flag to indicate kill request
-                    KILL_AGENT_REQUESTED = True
+                    if target_tab_id:
+                        print(f"*** KILL AGENT REQUEST RECEIVED FOR SPECIFIC TAB: {target_tab_id} ***")
+                        # Add this tab to the kill requests set
+                        async with tab_kill_requests_lock:
+                            tab_kill_requests.add(target_tab_id)
+                    else:
+                        print("*** KILL AGENT REQUEST RECEIVED FOR ALL TASKS ***")
+                        # Set global flag for backwards compatibility when killing all tasks
+                        KILL_AGENT_REQUESTED = True
                     
-                    # Cancel all active browser agent tasks
+                    # Get tasks to cancel based on target
                     async with active_browser_agent_tasks_lock:
-                        tasks_to_cancel = list(active_browser_agent_tasks.items())
+                        # Debug: Show what tasks are currently active
+                        print(f"DEBUG: Active browser agent tasks: {list(active_browser_agent_tasks.keys())}")
+                        
+                        if target_tab_id:
+                            # Kill only the specific task
+                            if target_tab_id in active_browser_agent_tasks:
+                                tasks_to_cancel = [(target_tab_id, active_browser_agent_tasks[target_tab_id])]
+                                print(f"Found exact match for tab {target_tab_id}")
+                            else:
+                                # If exact match not found, check if there's a task running on "current" 
+                                # and we have only one active task (likely the one we want to kill)
+                                if len(active_browser_agent_tasks) == 1:
+                                    # There's only one task running, kill it regardless of tab_id
+                                    tasks_to_cancel = list(active_browser_agent_tasks.items())
+                                    print(f"No exact match for tab {target_tab_id}, but killing the only active task: {list(active_browser_agent_tasks.keys())}")
+                                else:
+                                    tasks_to_cancel = []
+                                    print(f"No exact match for tab {target_tab_id} and multiple tasks active: {list(active_browser_agent_tasks.keys())}")
+                        else:
+                            # Kill all tasks
+                            tasks_to_cancel = list(active_browser_agent_tasks.items())
+                            print(f"Killing all {len(tasks_to_cancel)} active tasks")
                     
                     cancelled_count = 0
                     for tab_id, task in tasks_to_cancel:
                         if task and not task.done():
                             try:
+                                print(f"Attempting to kill agent task for tab {tab_id}")
+                                
+                                # Mark this specific task for cancellation
+                                if hasattr(task, '_should_cancel'):
+                                    task._should_cancel = True
+                                
                                 # Try to stop the agent gracefully first
                                 if hasattr(task, '_agent') and task._agent:
-                                    print("Setting agent stopped flag")
+                                    print("Setting agent stopped flag and forcing exit conditions")
+                                    
+                                    # Set multiple exit conditions to ensure the agent stops
                                     task._agent.state.stopped = True
+                                    task._agent.state.consecutive_failures = 999
                                     
-                                    # Force immediate cancellation of any ongoing browser operations
-                                    if hasattr(task._agent, 'browser_context') and task._agent.browser_context:
-                                        try:
-                                            print("Attempting to stop browser operations")
-                                            page = await task._agent.browser_context.get_current_page()
-                                            await page.evaluate('window.stop()')
-                                        except Exception as e:
-                                            print(f"Error stopping page operations: {e}")
+                                    # Force the agent to exit its main loop
+                                    if hasattr(task._agent.state, 'max_failures'):
+                                        task._agent.state.max_failures = 0
                                     
-                                    # Force high failure count to trigger exit condition
+                                    # Try to interrupt any ongoing browser operations
                                     try:
-                                        task._agent.state.consecutive_failures = 999
+                                        if hasattr(task._agent, 'browser_session') and task._agent.browser_session:
+                                            browser_session = task._agent.browser_session
+                                            if hasattr(browser_session, 'agent_current_page') and browser_session.agent_current_page:
+                                                print("Attempting to stop current page operations")
+                                                page = browser_session.agent_current_page
+                                                await page.evaluate('window.stop()')
                                     except Exception as e:
-                                        print(f"Error setting high failure count: {e}")
+                                        print(f"Error stopping page operations: {e}")
                                     
                                     # Call the stop method which includes resource cleanup
                                     try:
                                         await task._agent.stop()
+                                        print(f"Successfully called agent.stop() for tab {tab_id}")
                                     except Exception as e:
                                         print(f"Error calling agent.stop(): {e}")
                                 
-                                # Cancel the task at asyncio level
-                                print(f"Cancelling task for tab {tab_id}")
+                                # Cancel the task at asyncio level with aggressive cancellation
+                                print(f"Force cancelling asyncio task for tab {tab_id}")
                                 task.cancel()
-                                cancelled_count += 1
                                 
-                                # Wait briefly for the cancellation to take effect
-                                await asyncio.sleep(0.5)
+                                # Try to wait for the task to be cancelled
+                                try:
+                                    await asyncio.wait_for(task, timeout=2.0)
+                                except (asyncio.CancelledError, asyncio.TimeoutError):
+                                    print(f"Task for tab {tab_id} was cancelled or timed out as expected")
+                                except Exception as e:
+                                    print(f"Task for tab {tab_id} ended with exception: {e}")
+                                
+                                cancelled_count += 1
                                 
                                 # Send cancellation notification to UI for immediate feedback
                                 await send_tool_call_update(
@@ -575,34 +604,77 @@ async def handle_websocket(websocket):
                                 
                             except Exception as e:
                                 print(f"Error cancelling task for tab {tab_id}: {e}")
+                                # Even if there's an error, count it as cancelled for user feedback
+                                cancelled_count += 1
                     
-                    # Clear all tasks
+                    # Clear completed tasks from tracking
                     async with active_browser_agent_tasks_lock:
-                        active_browser_agent_tasks.clear()
+                        if target_tab_id:
+                            # Remove only the specific task
+                            if target_tab_id in active_browser_agent_tasks:
+                                del active_browser_agent_tasks[target_tab_id]
+                                print(f"Removed task for tab {target_tab_id} from active tasks")
+                        else:
+                            # Remove all tasks
+                            active_browser_agent_tasks.clear()
+                            print("Cleared all active tasks")
                     
-                    # Clear current task reference
-                    current_browser_agent_task = None
+                    # Clear tab-specific kill requests for completed tasks
+                    async with tab_kill_requests_lock:
+                        if target_tab_id:
+                            # Remove only the specific tab kill request
+                            tab_kill_requests.discard(target_tab_id)
+                            print(f"Cleared kill request for tab {target_tab_id}")
+                        else:
+                            # Clear all tab kill requests
+                            tab_kill_requests.clear()
+                            print("Cleared all tab-specific kill requests")
                     
-                    # Force browser to close if tasks are still running
-                    if cancelled_count > 0:
-                        try:
-                            if browser and hasattr(browser, 'browser') and browser.browser:
-                                await browser.browser.close()
-                                print("Forcibly closed browser")
-                        except Exception as e:
-                            print(f"Error forcibly closing browser: {e}")
+                    # Clear current task reference if it matches what we just cancelled
+                    if not target_tab_id or (target_tab_id and current_browser_agent_task in [task for _, task in tasks_to_cancel]):
+                        current_browser_agent_task = None
                     
                     # Send final response
                     if cancelled_count > 0:
+                        if target_tab_id:
+                            message = f"Agent task for tab {target_tab_id} cancelled successfully"
+                        else:
+                            message = f"Agent tasks cancelled successfully ({cancelled_count} tasks)"
+                        
                         await websocket.send(json.dumps({
                             "status": "ok", 
-                            "message": f"Agent task cancelled successfully ({cancelled_count} tasks)"
+                            "message": message,
+                            "tab_id": target_tab_id  # Include tab_id in response for frontend routing
                         }))
+                        print(f"Successfully cancelled {cancelled_count} agent task(s)")
                     else:
-                        await websocket.send(json.dumps({
-                            "status": "error",
-                            "message": "No active agent task to kill"
-                        }))
+                        # If no tasks were cancelled but we have a specific tab_id request,
+                        # try emergency fallback: set global kill flag to force all agents to stop
+                        if target_tab_id:
+                            print(f"WARNING: Failed to find specific task for tab {target_tab_id}. Using emergency global kill.")
+                            KILL_AGENT_REQUESTED = True
+                            
+                            # Also add this tab to kill requests as a backup
+                            async with tab_kill_requests_lock:
+                                tab_kill_requests.add(target_tab_id)
+                            
+                            message = f"Emergency kill initiated for tab {target_tab_id} (task not found in registry)"
+                            
+                            await websocket.send(json.dumps({
+                                "status": "ok", 
+                                "message": message,
+                                "tab_id": target_tab_id
+                            }))
+                            print(message)
+                        else:
+                            message = "No active agent tasks to kill"
+                            
+                            await websocket.send(json.dumps({
+                                "status": "error",
+                                "message": message,
+                                "tab_id": target_tab_id
+                            }))
+                            print(message)
 
                 # Handle browser agent requests with deduplication
                 elif data.get("type") == "browser_agent_request":
@@ -641,9 +713,11 @@ async def handle_websocket(websocket):
                         }))
                         
                         # Start the task and track it
+                        print(f"DEBUG: Starting browser agent task with tab_id: '{tab_id}'")
                         task = asyncio.create_task(main(prompt, tab_id))
                         active_browser_agent_tasks[tab_id] = task
                         current_browser_agent_task = task
+                        print(f"DEBUG: Active tasks after adding: {list(active_browser_agent_tasks.keys())}")
                         
                         # Add cleanup callback
                         def task_done_callback(completed_task):
@@ -694,20 +768,27 @@ async def handle_websocket(websocket):
             set_websocket_connection(None)
 
 # Enhanced cancellation check mechanism
-async def check_cancellation():
+async def check_cancellation(tab_id=None):
     """A periodic check that needs to be run alongside the agent task to detect cancellation"""
     global KILL_AGENT_REQUESTED
     
     try:
         # Continue checking until cancellation is requested or task completes
         while True:
-            # If kill was requested through the global flag
+            # Check for global kill request
             if KILL_AGENT_REQUESTED:
-                print("Cancellation check detected kill request")
-                raise asyncio.CancelledError("Kill requested")
+                print("Cancellation check detected global kill request - forcing immediate cancellation")
+                raise asyncio.CancelledError("Global kill requested")
             
-            # Brief sleep to avoid CPU thrashing
-            await asyncio.sleep(0.5)
+            # Check for tab-specific kill request
+            if tab_id:
+                async with tab_kill_requests_lock:
+                    if tab_id in tab_kill_requests:
+                        print(f"Cancellation check detected tab-specific kill request for {tab_id} - forcing immediate cancellation")
+                        raise asyncio.CancelledError(f"Tab {tab_id} kill requested")
+            
+            # More frequent checks during active operations
+            await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         # Allow cancellation of this check task itself
         print("Cancellation check task itself was cancelled")
@@ -721,19 +802,27 @@ async def main(task_message, tab_id=None):
     global KILL_AGENT_REQUESTED
     global active_browser_agent_tasks
     
-    # Reset kill flag at start of new task
-    KILL_AGENT_REQUESTED = False
+    # Don't reset kill flag at start if it's already set (emergency kill)
+    if not KILL_AGENT_REQUESTED:
+        KILL_AGENT_REQUESTED = False
     
     if tab_id is None:
         tab_id = "current"  # Default tab ID if none found
     
+    print(f"DEBUG: main() called with tab_id: '{tab_id}' (type: {type(tab_id)})")
     print(f"Running browser agent for tab {tab_id} with task: {task_message[:100]}...")
 
     # Create a closure that captures the current tab_id
     async def tool_call_callback(action_name, details="", status="in_progress"):
         # Check for cancellation before sending updates
         if KILL_AGENT_REQUESTED:
-            raise asyncio.CancelledError("Kill requested during tool call")
+            raise asyncio.CancelledError("Global kill requested during tool call")
+        
+        # Check for tab-specific cancellation
+        async with tab_kill_requests_lock:
+            if tab_id in tab_kill_requests:
+                raise asyncio.CancelledError(f"Tab {tab_id} kill requested during tool call")
+        
         await send_tool_call_update(action_name, details, status, tab_id)
     
     # Initialize the controller with the callback
@@ -846,26 +935,83 @@ async def main(task_message, tab_id=None):
         use_vision=True,
     )
     
+    # Store tab_id with the agent so our patches can check it
+    agent._tab_id = tab_id
+    
     # Execute the agent's task and capture the result
     try:
-        # Create a cancellation check that runs alongside the agent
-        cancel_check_task = asyncio.create_task(check_cancellation())
+        # Create a cancellation check that runs alongside the agent (pass tab_id for specific cancellation)
+        cancel_check_task = asyncio.create_task(check_cancellation(tab_id))
         
         try:
             # Store reference to the agent for potential cancellation
             if current_browser_agent_task:
                 current_browser_agent_task._agent = agent
             
-            # Run the agent with the cancellation checker running in parallel
-            result = await asyncio.shield(agent.run())
+            # Run the agent and cancellation checker concurrently
+            agent_task = asyncio.create_task(agent.run())
             
-            # Send completion response back to the client
-            await send_completion_response(tab_id, result)
+            # Wait for either the agent to complete or cancellation to occur
+            done, pending = await asyncio.wait(
+                [agent_task, cancel_check_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
             
-            # Log completion
-            print(f"Completion response sent to UI for tab {tab_id}")
+            # Cancel any remaining tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
             
-            return result
+            # Check which task completed first
+            if agent_task in done:
+                # Agent completed normally
+                result = agent_task.result()
+                await send_completion_response(tab_id, result)
+                print(f"Agent completed normally for tab {tab_id}")
+                return result
+            else:
+                # Cancellation occurred first
+                print(f"Agent was cancelled for tab {tab_id}")
+                
+                # Force stop the agent
+                agent.state.stopped = True
+                agent.state.consecutive_failures = 999
+                
+                # Try to call agent stop method
+                try:
+                    await agent.stop()
+                    print(f"Successfully stopped agent for tab {tab_id}")
+                except Exception as e:
+                    print(f"Error stopping agent for tab {tab_id}: {e}")
+                
+                raise asyncio.CancelledError("Agent was killed by user request")
+            
+        except asyncio.CancelledError:
+            # Handle cancellation explicitly
+            print(f"Handling cancellation for tab {tab_id}")
+            
+            # Make sure agent is stopped
+            try:
+                agent.state.stopped = True
+                agent.state.consecutive_failures = 999
+                await agent.stop()
+                print(f"Agent stopped due to cancellation for tab {tab_id}")
+            except Exception as e:
+                print(f"Error stopping cancelled agent for tab {tab_id}: {e}")
+            
+            # Cancel the checker if still running
+            if cancel_check_task and not cancel_check_task.done():
+                cancel_check_task.cancel()
+                try:
+                    await cancel_check_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Re-raise to be handled by the outer try-catch
+            raise
             
         finally:
             # Always cancel the checker when done
@@ -878,13 +1024,7 @@ async def main(task_message, tab_id=None):
     
     except asyncio.CancelledError:
         # Specifically handle task cancellation
-        print(f"Task cancelled for tab {tab_id}")
-        
-        # Ensure agent is fully stopped
-        agent.state.stopped = True
-        
-        # Set high failure count to force termination of agent's step loop
-        agent.state.consecutive_failures = 999
+        print(f"Final cancellation handler for tab {tab_id}")
         
         # Send cancellation notification
         await send_tool_call_update(
@@ -929,15 +1069,24 @@ async def main(task_message, tab_id=None):
     finally:
         # Ensure resources are cleaned up
         try:
-            # Clear kill flag
-            KILL_AGENT_REQUESTED = False
+            # Clean up kill request flags for this specific task
+            try:
+                # Clear global kill flag only if we're killing all tasks
+                # (Don't clear it if there are other tasks that might need it)
+                async with active_browser_agent_tasks_lock:
+                    remaining_tasks = len(active_browser_agent_tasks)
+                if remaining_tasks <= 1:  # This task plus maybe one other
+                    KILL_AGENT_REQUESTED = False
+                    print("Cleared global kill flag - no remaining tasks")
+                
+                # Always clear tab-specific kill request
+                async with tab_kill_requests_lock:
+                    tab_kill_requests.discard(tab_id)
+                    print(f"Cleared kill request for tab {tab_id}")
+                
+            except Exception as e:
+                print(f"Error clearing kill flags: {e}")
             
-            # Clean up agent resources
-            if agent.browser_context:
-                try:
-                    await agent.browser_context.close()
-                except Exception as e:
-                    print(f"Error closing browser context: {e}")
             # Close the browser session for this run (safe even if keep_alive=True)
             try:
                 await browser_session.close()
@@ -961,6 +1110,7 @@ async def main(task_message, tab_id=None):
             async with active_browser_agent_tasks_lock:
                 if tab_id in active_browser_agent_tasks:
                     del active_browser_agent_tasks[tab_id]
+                    print(f"Removed tab {tab_id} from active tasks during cleanup")
             
         except Exception as cleanup_error:
             print(f"Error during cleanup: {cleanup_error}")
@@ -991,6 +1141,49 @@ async def stop(self):
 
 # Monkey patch the Agent.stop method to use our enhanced version
 Agent.stop = stop
+
+# Patch the Agent's step method to check for kill requests
+original_step = Agent.step
+
+async def patched_step(self, step_info=None):
+    """Patched step method that checks for kill requests"""
+    global KILL_AGENT_REQUESTED
+    global tab_kill_requests
+    
+    # Check for kill requests before each step
+    if KILL_AGENT_REQUESTED:
+        print(f"Kill detected in patched step method for agent {self.id}")
+        self.state.stopped = True
+        raise asyncio.CancelledError("Global kill requested - stopping agent")
+    
+    # Check for tab-specific kill
+    agent_tab_id = getattr(self, '_tab_id', None)
+    if agent_tab_id:
+        async with tab_kill_requests_lock:
+            if agent_tab_id in tab_kill_requests:
+                print(f"Tab-specific kill detected in patched step for tab {agent_tab_id}")
+                self.state.stopped = True
+                raise asyncio.CancelledError(f"Tab {agent_tab_id} kill requested - stopping agent")
+    
+    # Call original step method
+    return await original_step(self, step_info)
+
+Agent.step = patched_step
+
+# Patch the Agent's multi_act to propagate cancellation properly
+original_multi_act = Agent.multi_act
+
+async def patched_multi_act(self, actions, check_for_new_elements=True):
+    """Patched multi_act that properly propagates cancellation"""
+    try:
+        return await original_multi_act(self, actions, check_for_new_elements)
+    except InterruptedError as e:
+        # If interrupted, set stopped flag and re-raise as CancelledError
+        print(f"InterruptedError in multi_act: {e}")
+        self.state.stopped = True
+        raise asyncio.CancelledError(str(e))
+
+Agent.multi_act = patched_multi_act
 
 # Install signal handlers for graceful termination
 def install_signal_handlers():

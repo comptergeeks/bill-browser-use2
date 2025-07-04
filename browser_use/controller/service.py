@@ -974,6 +974,77 @@ Explain the content of the page and that the requested information is not availa
 	def use_structured_output_action(self, output_model: type[T]):
 		self._register_done_action(output_model)
 
+	def _format_action_details(self, action_name: str, params: dict) -> str:
+		"""Format action parameters into a human-readable description for tool call updates"""
+		if action_name == "click_element_by_index":
+			index = params.get("index", "unknown")
+			# Format for JavaScript parser: "Clicked on element with index X"
+			return f"Clicked on element with index {index}"
+		elif action_name == "input_text":
+			index = params.get("index", "unknown")
+			text = params.get("text", "")
+			# Truncate long text but show a preview
+			if len(text) > 50:
+				text_preview = text[:47] + "..."
+			else:
+				text_preview = text
+			return f"Input text into element {index}: '{text_preview}'"
+		elif action_name == "search_google":
+			query = params.get("query", "")
+			# Format for JavaScript parser: "Searched for \"query\" in Google"
+			return f'Searched for "{query}" in Google'
+		elif action_name == "go_to_url":
+			url = params.get("url", "")
+			new_tab = params.get("new_tab", False)
+			if new_tab:
+				return f"Opening new tab with URL: {url}"
+			else:
+				return f"Navigating to: {url}"
+		elif action_name == "scroll":
+			down = params.get("down", True)
+			direction = "down" if down else "up"
+			return f"Scrolling {direction}"
+		elif action_name == "upload_file":
+			index = params.get("index", "unknown")
+			path = params.get("path", "")
+			filename = path.split("/")[-1] if path else "file"
+			return f"Uploading file '{filename}' to element {index}"
+		elif action_name == "switch_tab":
+			page_id = params.get("page_id", "unknown")
+			return f"Switching to tab {page_id}"
+		elif action_name == "close_tab":
+			page_id = params.get("page_id", "unknown")
+			return f"Closing tab {page_id}"
+		elif action_name == "send_keys":
+			keys = params.get("keys", "")
+			return f"Sending keys: {keys}"
+		elif action_name == "done":
+			success = params.get("success", True)
+			status = "successfully" if success else "with issues"
+			return f"Task completed {status}"
+		elif action_name == "extract_structured_data":
+			query = params.get("query", "")
+			if len(query) > 50:
+				query = query[:47] + "..."
+			return f"Extracting data: '{query}'"
+		elif action_name == "scroll_to_text":
+			text = params.get("text", "")
+			if len(text) > 30:
+				text = text[:27] + "..."
+			return f"Scrolling to text: '{text}'"
+		elif action_name == "select_dropdown_option":
+			index = params.get("index", "unknown")
+			text = params.get("text", "")
+			if len(text) > 30:
+				text = text[:27] + "..."
+			return f"Selecting option '{text}' in dropdown {index}"
+		elif action_name == "get_dropdown_options":
+			index = params.get("index", "unknown")
+			return f"Getting dropdown options for element {index}"
+		else:
+			# Generic fallback for unknown actions
+			return f"Executing {action_name}"
+
 	# Register ---------------------------------------------------------------
 
 	def action(self, description: str, **kwargs):
@@ -1015,17 +1086,16 @@ Explain the content of the page and that the requested information is not availa
 				if params is not None:
 				# Notify about tool call starting via callback if it exists
 					if hasattr(self, 'tool_call_callback') and self.tool_call_callback:
-						# Format params for display (keep it concise)
-						# Keep it extremely simple to avoid heavy nested serialization
+						# Format params for display with meaningful details
 						try:
-							params_str = params.__class__.__name__ if params else ""
+							details = self._format_action_details(action_name, params)
 						except Exception:
-							params_str = "<params>"
+							details = f"Executing {action_name}"
 						
 						try:
 							await self.tool_call_callback(
 								action_name=action_name,
-								details=params_str,
+								details=details,
 								status="in_progress"
 							)
 						except Exception as e:
