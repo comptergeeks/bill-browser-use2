@@ -1,7 +1,8 @@
 import pytest
-from playwright.async_api import async_playwright
 
 from browser_use.browser import BrowserSession
+from browser_use.browser.profile import BrowserProfile
+from browser_use.browser.types import async_playwright
 
 
 <<<<<<< HEAD
@@ -12,9 +13,16 @@ async def test_connection_via_cdp(monkeypatch):
 async def test_connection_via_cdp():
 	browser_session = BrowserSession(
 		cdp_url='http://localhost:9898',
+<<<<<<< HEAD
 		headless=True,
 		keep_alive=True,
 >>>>>>> 0.2.6
+=======
+		browser_profile=BrowserProfile(
+			headless=True,
+			keep_alive=True,
+		),
+>>>>>>> 0.4.2
 	)
 	with pytest.raises(Exception) as e:
 		await browser_session.start()

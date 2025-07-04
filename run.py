@@ -4,15 +4,15 @@ import platform
 import sys
 from pathlib import Path
 
+# Ensure project root is on PYTHONPATH when running as a script
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-
-from browser_use import Agent, Browser, BrowserConfig
+from browser_use import Agent, ChatOpenAI
+from browser_use.browser.profile import BrowserProfile
 from browser_use.browser.session import BrowserSession
-from browser_use.controller.service import Controller
 
+from browser_use.controller.service import Controller
 from browser_use.logging_config import setup_logging
 
 load_dotenv()
@@ -20,30 +20,34 @@ load_dotenv()
 setup_logging()
 
 
-def get_browser_path():
-	    # Get the base directory where the executable is located
-    if getattr(sys, 'frozen', False):
-        # If running as bundled executable
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        # If running as script
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+def get_browser_path() -> Path | None:
+    """Return a platform-specific path to the packaged Chromium build if bundled.
 
-    # Determine path based on operating system
-    if platform.system() == "Darwin":  # macOS
-        # Check if using system installed app or bundled version
-        system_path = '/Applications/Meteor.app/Contents/MacOS/Meteor'
+    Returns None if the path cannot be determined – the default Playwright
+    browser will then be used.
+    """
+    # Resolve directory of the running entry-point (handles PyInstaller bundle)
+    base_dir = (
+        os.path.dirname(sys.executable)
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__))
+    )
+
+    if platform.system() == "Darwin":
+        # Prefer a system-wide install if present, otherwise fall back to a
+        # relative path next to the executable.
+        system_path = "/Applications/Meteor.app/Contents/MacOS/Meteor"
         relative_path = os.path.join(base_dir, "Meteor")
-
-        # Use system path if it exists, otherwise use relative
         if os.path.exists(system_path):
             return Path(system_path)
-        else:
+        if os.path.exists(relative_path):
             return Path(relative_path)
-
     elif platform.system() == "Windows":
-        # Windows path - assuming the browser executable is included with your app
-        return Path(os.path.join(base_dir, "Bill-Gates-Browser.exe"))
+        candidate = Path(base_dir) / "Bill-Gates-Browser.exe"
+        return candidate if candidate.exists() else None
+
+    # Unsupported/unknown – caller can decide what to do.
+    return None
 
 
 # browser = Browser(config=BrowserConfig(browser_binary_path=get_browser_path()))
@@ -55,42 +59,32 @@ if not openai_api_key:
     print("⚠️ WARNING: OPENAI_API_KEY not found in environment variables")
     print("Either set it in .env file or provide it explicitly")
 
-try:
-    llm = ChatOpenAI(
-        model="gpt-4.1",
-        temperature=0.0,
-        api_key=openai_api_key,  # Explicitly pass the API key
-    )
-except Exception as e:
-    print(f"Error initializing ChatOpenAI: {str(e)}")
-    print("Falling back to a placeholder LLM that will fail gracefully")
-    # Create a minimal placeholder that will fail with better error messages
-    class PlaceholderLLM:
-        def __init__(self):
-            self._verified_api_keys = False
-        async def ainvoke(self, *args, **kwargs):
-            raise ValueError("OpenAI API key not configured correctly. Please check your .env file.")
-        def invoke(self, *args, **kwargs):
-            raise ValueError("OpenAI API key not configured correctly. Please check your .env file.")
-    llm = PlaceholderLLM()
+llm = ChatOpenAI(
+    model="gpt-4.1",  # Use the latest supported model name
+    temperature=0.0,
+    api_key=openai_api_key,
+)
 
 
 async def main():
-	task = 'go to pokemon showdown .'
-	controller = Controller()
+    task = "open pokemon showdown in a new tab and play game until u win."
+    controller = Controller()
 
-	# this should work to connect to the available instance
-	browser_session= BrowserSession(highlight_elements=False, cdp_url="http://localhost:9222")
+    # Re-use an already running Chromium instance if one is exposed via CDP.
+    browser_session = BrowserSession(
+        browser_profile=BrowserProfile(highlight_elements=False),
+        cdp_url="http://localhost:9222",
+    )
 
-	agent = Agent(
-		browser_session=browser_session,
-		task=task,
-		llm=llm,
-		controller=controller,
-		use_vision=True
-	)
-	await agent.run()
+    agent = Agent(
+        browser_session=browser_session,
+        task=task,
+        llm=llm,
+        controller=controller,
+        use_vision=True,
+    )
+    await agent.run()
 
 
-if __name__ == '__main__':
-	asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

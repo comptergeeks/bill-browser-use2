@@ -25,15 +25,13 @@ import subprocess
 import importlib.util
 from browser_use.browser.profile import BrowserProfile
 import shutil
-from langchain_openai import ChatOpenAI
+from browser_use import Agent, ChatOpenAI
+from browser_use.logging_config import setup_logging
 
 
-# Configure logging for detailed output
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  # Ensure logs go to standard output
-)
+os.environ["BROWSER_USE_LOGGING_LEVEL"] = "debug"
+from browser_use.logging_config import setup_logging
+setup_logging()
 
 # Global flag to track if a kill command has been received
 KILL_AGENT_REQUESTED = False
@@ -103,7 +101,9 @@ def get_browser_path():
 # `Browser` is an alias for `BrowserSession`.
 browser = Browser(
     cdp_url="http://localhost:9222",  # CDP endpoint
-    browser_profile=BrowserProfile(stealth=True),
+    # Stealth mode requires Patchright + Node.js which may be missing in bundled builds.
+    # Disable stealth to use standard Playwright when merely connecting to an existing CDP target.
+    browser_profile=BrowserProfile(stealth=False, highlight_elements=False),
 )
 
 ### LLM OPTIONS
@@ -121,7 +121,7 @@ if not openai_api_key:
 
 llm_kwargs: dict[str, Any] = {
     "model": "gpt-4.1",
-    # "temperature": 0.7,
+    "temperature": 0.0,
 }
 
 if openai_api_key:
@@ -741,86 +741,87 @@ async def main(task_message, tab_id=None):
         tool_call_callback=tool_call_callback
     )
     
-    # Add human intervention action to this controller instance
-    @controller.registry.action('Request human intervention')
-    async def request_human_intervention(reason: str = "Action requires human intervention") -> ActionResult:
-        """
-        Programmatically pauses Browser-Use execution and requests human intervention via WebSocket.
+    # Register the helper only once per Controller instance to avoid duplicate action models
+    if "request_human_intervention" not in controller.registry.registry.actions:
+        @controller.registry.action('Request human intervention')
+        async def request_human_intervention(reason: str = "Action requires human intervention") -> ActionResult:
+            """
+            Programmatically pauses Browser-Use execution and requests human intervention via WebSocket.
 
-        Args:
-            reason: Description of why human intervention is needed
+            Args:
+                reason: Description of why human intervention is needed
 
-        Returns:
-            ActionResult indicating success after human intervention completes
-        """
-        global websocket_connection, intervention_events, KILL_AGENT_REQUESTED
+            Returns:
+                ActionResult indicating success after human intervention completes
+            """
+            global websocket_connection, intervention_events, KILL_AGENT_REQUESTED
 
-        # Check for cancellation first
-        if KILL_AGENT_REQUESTED:
-            return ActionResult(success=False, extracted_content="Operation cancelled by user")
-
-        intervention_id = str(uuid.uuid4())
-        intervention_events[intervention_id] = asyncio.Event()
-
-        # Prepare message for Nexus
-        message = {
-            "type": "human_intervention_required",
-            "intervention_id": intervention_id,
-            "reason": reason,
-            "timestamp": time.time()
-        }
-
-        if websocket_connection:
-            try:
-                # Create an explicit task for the send operation
-                send_task = asyncio.create_task(websocket_connection.send(json.dumps(message)))
-                await send_task
-                print(f"Sent intervention request: {reason}")
-            except Exception as e:
-                print(f"Error sending intervention request: {e}")
-                return ActionResult(success=False, extracted_content=f"Failed to request intervention: {e}")
-        else:
-            print("No websocket connection available")
-            return ActionResult(success=False, extracted_content="No websocket connection available")
-
-        try:
-            # Create a special task that periodically checks for cancellation while waiting
-            wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
-            cancel_check_task = asyncio.create_task(check_cancellation())
-            
-            # Wait for resolution with timeout
-            done, pending = await asyncio.wait(
-                [wait_event_task, cancel_check_task],
-                return_when=asyncio.FIRST_COMPLETED,
-                timeout=30000  # 8 hour timeout
-            )
-            
-            # Cancel any pending tasks
-            for task in pending:
-                task.cancel()
-                
-            # Check if we completed due to kill request
+            # Check for cancellation first
             if KILL_AGENT_REQUESTED:
-                raise asyncio.CancelledError("Kill requested during intervention wait")
+                return ActionResult(success=False, extracted_content="Operation cancelled by user")
+
+            intervention_id = str(uuid.uuid4())
+            intervention_events[intervention_id] = asyncio.Event()
+
+            # Prepare message for Nexus
+            message = {
+                "type": "human_intervention_required",
+                "intervention_id": intervention_id,
+                "reason": reason,
+                "timestamp": time.time()
+            }
+
+            if websocket_connection:
+                try:
+                    # Create an explicit task for the send operation
+                    send_task = asyncio.create_task(websocket_connection.send(json.dumps(message)))
+                    await send_task
+                    print(f"Sent intervention request: {reason}")
+                except Exception as e:
+                    print(f"Error sending intervention request: {e}")
+                    return ActionResult(success=False, extracted_content=f"Failed to request intervention: {e}")
+            else:
+                print("No websocket connection available")
+                return ActionResult(success=False, extracted_content="No websocket connection available")
+
+            try:
+                # Create a special task that periodically checks for cancellation while waiting
+                wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
+                cancel_check_task = asyncio.create_task(check_cancellation())
                 
-            # Check if we timed out (neither task completed)
-            if not done:
+                # Wait for resolution with timeout
+                done, pending = await asyncio.wait(
+                    [wait_event_task, cancel_check_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=30000  # 8 hour timeout
+                )
+                
+                # Cancel any pending tasks
+                for task in pending:
+                    task.cancel()
+                
+                # Check if we completed due to kill request
+                if KILL_AGENT_REQUESTED:
+                    raise asyncio.CancelledError("Kill requested during intervention wait")
+                
+                # Check if we timed out (neither task completed)
+                if not done:
+                    print(f"Timeout waiting for human intervention: {reason}")
+                    return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
+                
+                # Normal completion
+                print(f"Human intervention completed for: {reason}")
+                return ActionResult(success=True, extracted_content=f"Human intervention completed for: {reason}")
+                
+            except asyncio.CancelledError:
+                print(f"Intervention wait cancelled: {reason}")
+                raise
+            except asyncio.TimeoutError:
                 print(f"Timeout waiting for human intervention: {reason}")
                 return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
-                
-            # Normal completion
-            print(f"Human intervention completed for: {reason}")
-            return ActionResult(success=True, extracted_content=f"Human intervention completed for: {reason}")
-                
-        except asyncio.CancelledError:
-            print(f"Intervention wait cancelled: {reason}")
-            raise
-        except asyncio.TimeoutError:
-            print(f"Timeout waiting for human intervention: {reason}")
-            return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
-        finally:
-            if intervention_id in intervention_events:
-                del intervention_events[intervention_id]
+            finally:
+                if intervention_id in intervention_events:
+                    del intervention_events[intervention_id]
     
     # First tool call update to show task starting
     await send_tool_call_update(
@@ -837,10 +838,12 @@ async def main(task_message, tab_id=None):
 
     # Create the agent using the existing browser session
     agent = Agent(
+        highlight_elements=False,
         task=task_message,
         llm=llm,
         controller=controller,
         browser_session=browser_session,
+        use_vision=True,
     )
     
     # Execute the agent's task and capture the result
@@ -935,12 +938,30 @@ async def main(task_message, tab_id=None):
                     await agent.browser_context.close()
                 except Exception as e:
                     print(f"Error closing browser context: {e}")
-                    
+            # Close the browser session for this run (safe even if keep_alive=True)
+            try:
+                await browser_session.close()
+            except Exception as e:
+                print(f"Error closing browser session: {e}")
+            
+            # 💡 IMPORTANT: clear stale state so the next Agent run can re-initialise cleanly.
+            # If we leave browser_session.initialized=True with a closed browser_context it can lead to
+            # unexpected errors (e.g. maximum recursion depth exceeded) when the next Agent tries to
+            # reuse the same BrowserSession. Reset the connection state here while *keeping* the
+            # underlying browser alive (keep_alive=True).
+            try:
+                browser_session.browser_context = None  # drop reference to the closed context
+                browser_session.agent_current_page = None
+                browser_session.human_current_page = None
+                browser_session.initialized = False
+            except Exception as e:
+                print(f"Error resetting BrowserSession state: {e}")
+            
             # Ensure tab is removed from active tasks
             async with active_browser_agent_tasks_lock:
                 if tab_id in active_browser_agent_tasks:
                     del active_browser_agent_tasks[tab_id]
-                    
+            
         except Exception as cleanup_error:
             print(f"Error during cleanup: {cleanup_error}")
 

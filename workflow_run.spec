@@ -1,16 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
-datas = [('.env', '.'), ('browser_use', 'browser_use')]
+datas = [('.env', '.')]
+binaries = []
+hiddenimports = ['pydantic.deprecated.decorator']
 datas += collect_data_files('patchright')
+tmp_ret = collect_all('browser_use')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['workflow_run.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
-    hiddenimports=['pydantic.deprecated.decorator'],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
