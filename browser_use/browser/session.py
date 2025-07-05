@@ -1931,9 +1931,6 @@ class BrowserSession(BaseModel):
 					# Move cursor to element's center position
 					await self.cursor_manager.move_cursor(int(center_x), int(center_y))
 					self.logger.debug(f"Moved cursor to element at ({center_x}, {center_y}) before click")
-					
-					# Small delay to make the cursor movement visible
-					await asyncio.sleep(0.1)
 			except Exception as e:
 				self.logger.debug(f"Failed to move cursor to element: {type(e).__name__}: {e}")
 				# Continue with click even if cursor movement fails
@@ -3450,9 +3447,6 @@ class BrowserSession(BaseModel):
 					# Move cursor to element's center position
 					await self.cursor_manager.move_cursor(int(center_x), int(center_y))
 					self.logger.debug(f"Moved cursor to input element at ({center_x}, {center_y})")
-					
-					# Small delay to make the cursor movement visible
-					await asyncio.sleep(0.1)
 			except Exception as e:
 				self.logger.debug(f"Failed to move cursor to input element: {type(e).__name__}: {e}")
 				# Continue with input even if cursor movement fails

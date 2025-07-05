@@ -502,9 +502,6 @@ Explain the content of the page and that the requested information is not availa
 				# Move cursor to center
 				await browser_session.cursor_manager.move_cursor(center_x, center_y)
 				logger.debug(f"Moved cursor to viewport center ({center_x}, {center_y}) for scroll")
-				
-				# Small delay to make cursor movement visible
-				await asyncio.sleep(0.1)
 			except Exception as e:
 				logger.debug(f"Failed to move cursor for scroll: {type(e).__name__}: {e}")
 

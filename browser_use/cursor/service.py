@@ -7,6 +7,7 @@ maintains cursor positions across tab switches, and automatically cleans up when
 
 from playwright.async_api import Page
 from typing import Dict, Optional, Tuple
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ class CursorManager:
     
     async def move_cursor(self, x: int, y: int) -> Dict:
         """
-        Move cursor to specified coordinates on the current page.
+        Move cursor to specified coordinates on the current page with smooth animation.
         
         Args:
             x: X coordinate
@@ -208,27 +209,79 @@ class CursorManager:
                 logger.debug("Cursor not found, initializing before moving")
                 await self.initialize_cursor_display(self.current_page)
             
-            # Move cursor elements
+            # Get current position
+            current_pos = await self.current_page.evaluate("""() => {
+                const svgCursor = document.getElementById('ai-cursor');
+                if (!svgCursor) return null;
+                const style = window.getComputedStyle(svgCursor);
+                return {
+                    x: parseInt(style.left) || 0,
+                    y: parseInt(style.top) || 0
+                };
+            }""")
+            
+            if not current_pos:
+                # If we can't get current position, just move directly
+                current_pos = {'x': x, 'y': y}
+            
+            # Calculate distance for dynamic duration
+            distance = ((x - current_pos['x']) ** 2 + (y - current_pos['y']) ** 2) ** 0.5
+            # Adjust duration based on distance (min 300ms, max 800ms)
+            duration = min(800, max(300, int(distance * 0.8)))
+            
+            # Move cursor elements with smooth animation
             result = await self.current_page.evaluate(f"""() => {{
                 try {{
-                    console.log("Moving cursor to {x}, {y}");
+                    console.log("Moving cursor to {x}, {y} with animation");
                     
                     const svgCursor = document.getElementById('ai-cursor');
                     const thoughtBubble = document.getElementById('ai-thought-bubble');
                     
-                    if (svgCursor) {{
-                        svgCursor.style.transition = 'top 0.5s ease, left 0.5s ease';
-                        svgCursor.style.left = "{x}px";
-                        svgCursor.style.top = "{y}px";
-                        console.log("SVG cursor moved");
-                    }}
+                    // Easing function (ease-in-out cubic)
+                    const easeInOutCubic = (t) => {{
+                        return t < 0.5 
+                            ? 4 * t * t * t 
+                            : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                    }};
                     
-                    // Move thought bubble with cursor
-                    if (thoughtBubble) {{
-                        thoughtBubble.style.transition = 'top 0.5s ease, left 0.5s ease';
-                        thoughtBubble.style.left = `${{{x} + 20}}px`;
-                        thoughtBubble.style.top = `${{{y} + 20}}px`;
-                        console.log("Thought bubble moved");
+                    if (svgCursor) {{
+                        const startX = parseInt(svgCursor.style.left) || 0;
+                        const startY = parseInt(svgCursor.style.top) || 0;
+                        const targetX = {x};
+                        const targetY = {y};
+                        const duration = {duration};
+                        const startTime = performance.now();
+                        
+                        // Remove any existing transition for smoother animation
+                        svgCursor.style.transition = 'none';
+                        if (thoughtBubble) {{
+                            thoughtBubble.style.transition = 'none';
+                        }}
+                        
+                        function animate(currentTime) {{
+                            const elapsed = currentTime - startTime;
+                            const progress = Math.min(elapsed / duration, 1);
+                            const easedProgress = easeInOutCubic(progress);
+                            
+                            const currentX = startX + (targetX - startX) * easedProgress;
+                            const currentY = startY + (targetY - startY) * easedProgress;
+                            
+                            svgCursor.style.left = currentX + 'px';
+                            svgCursor.style.top = currentY + 'px';
+                            
+                            if (thoughtBubble) {{
+                                thoughtBubble.style.left = (currentX + 20) + 'px';
+                                thoughtBubble.style.top = (currentY + 20) + 'px';
+                            }}
+                            
+                            if (progress < 1) {{
+                                requestAnimationFrame(animate);
+                            }} else {{
+                                console.log("Cursor animation completed");
+                            }}
+                        }}
+                        
+                        requestAnimationFrame(animate);
                     }}
                     
                     return {{
@@ -237,7 +290,8 @@ class CursorManager:
                             svgCursor: !!svgCursor,
                             thoughtBubble: !!thoughtBubble
                         }},
-                        position: {{ x: {x}, y: {y} }}
+                        position: {{ x: {x}, y: {y} }},
+                        duration: {duration}
                     }};
                 }} catch (error) {{
                     console.error("Error moving cursor:", error);
@@ -251,6 +305,9 @@ class CursorManager:
             # Update stored position if movement was successful
             if result and result.get('success') and self.current_page:
                 self.cursor_positions[self.current_page.url] = (x, y)
+                
+                # Wait for animation to complete
+                await asyncio.sleep(duration / 1000.0)
             
             return result
             
