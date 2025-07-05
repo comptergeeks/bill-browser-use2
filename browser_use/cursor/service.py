@@ -71,9 +71,19 @@ class CursorManager:
             result = await browser_page.evaluate(f"""() => {{
                 console.log("Starting cursor initialization");
                 
-                // First, check if elements already exist and remove them
+                // First, check if elements already exist and preserve thoughts
                 const existingCursor = document.getElementById('ai-cursor');
                 const existingThought = document.getElementById('ai-thought-bubble');
+                const existingThoughtContent = document.getElementById('ai-thought-content');
+                let preservedThoughts = 'Thinking...';
+                
+                // Preserve existing thoughts if they exist and aren't default
+                if (existingThoughtContent && existingThoughtContent.innerText && 
+                    existingThoughtContent.innerText !== 'Thinking...' && 
+                    existingThoughtContent.innerText.trim() !== '') {{
+                    preservedThoughts = existingThoughtContent.innerText;
+                    console.log("Preserving existing thoughts:", preservedThoughts);
+                }}
                 
                 if (existingCursor) {{
                     console.log("Removing existing cursor");
@@ -151,7 +161,7 @@ class CursorManager:
                     thoughtContent.id = 'ai-thought-content';
                     thoughtContent.style.maxHeight = '40px';
                     thoughtContent.style.overflow = 'hidden';
-                    thoughtContent.innerText = 'Thinking...';
+                    thoughtContent.innerText = preservedThoughts;
                     
                     thoughtBubble.appendChild(thoughtContent);
                     document.body.appendChild(thoughtBubble);
@@ -317,7 +327,7 @@ class CursorManager:
     
     async def update_cursor_thoughts(self, thoughts: str) -> bool:
         """
-        Update the text in the thought bubble.
+        Update the text in the thought bubble with streaming animation.
         
         Args:
             thoughts: Text to display in the thought bubble
@@ -329,28 +339,80 @@ class CursorManager:
             return False
             
         try:
-            # Ensure text is properly escaped for JavaScript
-            escaped_text = thoughts.replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
+            logger.debug(f"Updating cursor thoughts with: {thoughts}")
+            
+            # Clean up text: replace newlines with spaces and limit length
+            clean_text = thoughts.replace('\n', ' ').replace('\r', ' ')
             
             # Limit text length to prevent overflow
-            if len(escaped_text) > 200:
-                escaped_text = escaped_text[:197] + "..."
+            if len(clean_text) > 200:
+                clean_text = clean_text[:197] + "..."
             
-            # Update the thought bubble text
-            result = await self.current_page.evaluate(f"""() => {{
-                try {{
+            logger.debug(f"Clean text: {clean_text}")
+            
+            # Stream the text character by character with animation
+            # Use parameter passing to avoid escaping issues
+            result = await self.current_page.evaluate("""(targetText) => {
+                try {
+                    console.log("Updating cursor thoughts with:", targetText);
                     const thoughtContent = document.getElementById('ai-thought-content');
-                    if (thoughtContent) {{
-                        thoughtContent.innerText = "{escaped_text}";
+                    if (!thoughtContent) {
+                        console.log("Thought content element not found");
+                        return false;
+                    }
+                    
+                    const currentText = thoughtContent.innerText || "";
+                    
+                    // If the text is the same, don't update to prevent flashing
+                    if (currentText === targetText) {
+                        console.log("Text unchanged, skipping update");
                         return true;
-                    }}
-                    return false;
-                }} catch (error) {{
+                    }
+                    
+                    // Clear any existing animation
+                    if (window.thoughtStreamingAnimation) {
+                        clearTimeout(window.thoughtStreamingAnimation);
+                        window.thoughtStreamingAnimation = null;
+                    }
+                    
+                    // Store the target text to prevent conflicts
+                    window.thoughtStreamingTarget = targetText;
+                    
+                    console.log("Starting streaming animation for:", targetText);
+                    
+                    // Start streaming animation
+                    let charIndex = 0;
+                    const streamText = () => {
+                        // Check if this is still the current target (prevent conflicts)
+                        if (window.thoughtStreamingTarget !== targetText) {
+                            console.log("Animation cancelled - new target set");
+                            return;
+                        }
+                        
+                        if (charIndex <= targetText.length) {
+                            thoughtContent.innerText = targetText.substring(0, charIndex);
+                            charIndex++;
+                            
+                            // Continue streaming with delay between characters
+                            window.thoughtStreamingAnimation = setTimeout(streamText, 8); // 8ms per character (much faster)
+                        } else {
+                            // Animation complete
+                            window.thoughtStreamingAnimation = null;
+                            console.log("Streaming animation completed");
+                        }
+                    };
+                    
+                    // Start the streaming animation
+                    streamText();
+                    
+                    return true;
+                } catch (error) {
                     console.error("Error updating thought bubble:", error);
                     return false;
-                }}
-            }}""")
+                }
+            }""", clean_text)
             
+            logger.debug(f"JavaScript evaluation result: {result}")
             return result
             
         except Exception as e:
@@ -678,6 +740,23 @@ class CursorManager:
         """
         logger.debug(f"Handling page switch to {new_page.url}")
         self.current_page = new_page
+        
+        # Check if cursor already exists on this page before re-initializing
+        try:
+            cursor_exists = await new_page.evaluate("""() => {
+                return !!document.getElementById('ai-cursor');
+            }""")
+            
+            if cursor_exists:
+                logger.debug("Cursor already exists on page, skipping re-initialization")
+                return {
+                    "success": True,
+                    "message": "Cursor already exists on page",
+                    "position": self.get_cursor_position(new_page.url)
+                }
+        except Exception as e:
+            logger.debug(f"Failed to check cursor existence: {e}")
+        
         return await self.initialize_cursor_display(new_page)
     
     def get_cursor_position(self, page_url: str) -> Tuple[int, int]:

@@ -748,6 +748,14 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 				self._message_manager._remove_last_state_message()
 				raise e
 
+			# Update cursor thoughts with the next predicted action
+			try:
+				if hasattr(model_output, 'next_goal') and model_output.next_goal:
+					await self.browser_session.cursor_manager.update_cursor_thoughts(model_output.next_goal)
+					self.logger.debug(f"Updated cursor thoughts with next goal: {model_output.next_goal}")
+			except Exception as e:
+				self.logger.debug(f"Failed to update cursor thoughts: {type(e).__name__}: {e}")
+
 			result: list[ActionResult] = await self.multi_act(model_output.action)
 
 			self.state.last_result = result
