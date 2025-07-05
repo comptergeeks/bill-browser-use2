@@ -1797,7 +1797,7 @@ class BrowserSession(BaseModel):
 			
 			# Ensure cursor is visible on the current page
 			try:
-				await self.cursor_manager.handle_page_switch(self.agent_current_page) 
+				await self.cursor_manager.handle_page_switch(self.agent_current_page)  # type: ignore
 				self.logger.debug(f"Cursor initialized on current page: {self.agent_current_page.url}")
 			except Exception as e:
 				self.logger.debug(f"Failed to initialize cursor on current page: {type(e).__name__}: {e}")
@@ -1824,7 +1824,7 @@ class BrowserSession(BaseModel):
 
 		# Ensure cursor is visible on the current page
 		try:
-			await self.cursor_manager.handle_page_switch(self.agent_current_page)
+			await self.cursor_manager.handle_page_switch(self.agent_current_page)  # type: ignore
 			self.logger.debug(f"Cursor initialized on current page: {self.agent_current_page.url}")
 		except Exception as e:
 			self.logger.debug(f"Failed to initialize cursor on current page: {type(e).__name__}: {e}")
@@ -1851,8 +1851,31 @@ class BrowserSession(BaseModel):
 		if not pages or tab_index >= len(pages):
 			raise IndexError('Tab index out of range')
 
+		# Remove cursor from current page before switching
+		if self.agent_current_page:
+			try:
+				removal_result = await self.cursor_manager.remove_cursor_from_page(self.agent_current_page)
+				self.logger.debug(f"Removed cursor from current page before tab switch: {removal_result}")
+			except Exception as e:
+				self.logger.debug(f"Failed to remove cursor from current page: {type(e).__name__}: {e}")
+
+		# Use Electron's switchTab function
+		handler_of_events = self.get_first_real_page()
+		switch_result = await handler_of_events.evaluate('async (index) => { return await window.switchTab(index); }', tab_index)
+		
+		if switch_result is None:
+			raise IndexError(f'Failed to switch to tab index: {tab_index}')
+
+		# Update references to the selected page
 		page = pages[tab_index]
 		self.agent_current_page = page
+
+		# Initialize cursor on the new page
+		try:
+			await self.cursor_manager.handle_page_switch(page)  # type: ignore
+			self.logger.debug(f"Cursor initialized on new tab: {page.url}")
+		except Exception as e:
+			self.logger.debug(f"Failed to initialize cursor on new tab: {type(e).__name__}: {e}")
 
 		# Invalidate cached state since we've switched to a different tab
 		self._cached_browser_state_summary = None

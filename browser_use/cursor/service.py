@@ -37,35 +37,30 @@ class CursorManager:
             self.current_page = browser_page
             page_url = browser_page.url
             
-            # Get stored position or default to (0, 0)
-            # get the position of the center of the page
-            # and then place it there
-            # get the center of the page
-            viewport_size = await browser_page.evaluate("""() => {
-                return {
-                    width: window.innerWidth,
-                    height: window.innerHeight
-                };
-            }""")
+            # Check if we have a stored position for this page
+            stored_position = self.cursor_positions.get(page_url)
             
-            center_x = viewport_size['width'] / 2 # type: ignore
-            center_y = viewport_size['height'] / 2 # type: ignore
-
-            # get the position of the center of the page
-            start_x = center_x
-            start_y = center_y
-
-            stored_position = self.cursor_positions.get(page_url, (start_x, start_y))
-            start_x, start_y = stored_position
+            if stored_position:
+                # Use the stored position
+                start_x, start_y = stored_position
+                logger.debug(f"Using stored cursor position for {page_url}: ({start_x}, {start_y})")
+            else:
+                # No stored position, calculate center of viewport as default
+                viewport_size = await browser_page.evaluate("""() => {
+                    return {
+                        width: window.innerWidth,
+                        height: window.innerHeight
+                    };
+                }""")
+                
+                start_x = viewport_size['width'] / 2 # type: ignore
+                start_y = viewport_size['height'] / 2 # type: ignore
+                logger.debug(f"Using center position for {page_url}: ({start_x}, {start_y})")
             
             # Convert cursor color to RGB for thought bubble
             r, g, b = self._hex_to_rgb(self.cursor_color)
             
-            # Get viewport size for debugging
-
-            
             logger.debug(f"Initializing cursor on {page_url} at position ({start_x}, {start_y})")
-            logger.debug(f"Viewport size: {viewport_size}")
             
             # Inject cursor elements into the page
             result = await browser_page.evaluate(f"""() => {{
@@ -593,9 +588,8 @@ class CursorManager:
                 }
             }""")
             
-            # Clear stored position for this page if cursor was removed
-            if removed > 0 and page_url in self.cursor_positions:
-                del self.cursor_positions[page_url]
+            # Note: We intentionally do NOT clear stored positions here
+            # This preserves cursor positions across page reloads and navigation
             
             # If this was the current page, reset cursor state
             if page == self.current_page and removed > 0:
@@ -669,9 +663,8 @@ class CursorManager:
                     }
                     total_removed += removed
                     
-                    # Clear stored position for this page if cursor was removed
-                    if removed > 0 and page_url in self.cursor_positions:
-                        del self.cursor_positions[page_url]
+                    # Note: We intentionally do NOT clear stored positions here
+                    # This preserves cursor positions across page reloads and navigation
                         
                 except Exception as e:
                     results[page_url] = {
@@ -889,4 +882,20 @@ class CursorManager:
         Args:
             color: Hex color code (e.g., "#6B1ECA")
         """
-        self.cursor_color = color 
+        self.cursor_color = color
+    
+    def clear_stored_position(self, page_url: str) -> bool:
+        """
+        Explicitly clear the stored cursor position for a specific page.
+        
+        Args:
+            page_url: URL of the page whose position should be cleared
+            
+        Returns:
+            bool: True if position was found and cleared
+        """
+        if page_url in self.cursor_positions:
+            del self.cursor_positions[page_url]
+            logger.debug(f"Cleared stored cursor position for: {page_url}")
+            return True
+        return False 
