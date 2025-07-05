@@ -1,7 +1,7 @@
 # @file purpose: Manages the visual cursor display for the browser-use AI agent
 """
 CursorManager handles the visual representation of where the AI agent is looking/clicking
-on web pages. It injects a custom cursor, laser pointer, and thought bubble into the page,
+on web pages. It injects a custom cursor and thought bubble into the page,
 maintains cursor positions across tab switches, and automatically cleans up when tabs close.
 """
 
@@ -59,17 +59,11 @@ class CursorManager:
                 
                 // First, check if elements already exist and remove them
                 const existingCursor = document.getElementById('ai-cursor');
-                const existingLaser = document.getElementById('ai-laser');
                 const existingThought = document.getElementById('ai-thought-bubble');
                 
                 if (existingCursor) {{
                     console.log("Removing existing cursor");
                     existingCursor.remove();
-                }}
-                
-                if (existingLaser) {{
-                    console.log("Removing existing laser");
-                    existingLaser.remove();
                 }}
                 
                 if (existingThought) {{
@@ -117,23 +111,6 @@ class CursorManager:
                     document.body.appendChild(svg);
                     console.log("SVG Cursor added to page");
                     
-                    // Laser pointer
-                    const laser = document.createElement('div');
-                    laser.id = 'ai-laser';
-                    laser.style.position = 'fixed';
-                    laser.style.width = '10px';
-                    laser.style.height = '10px';
-                    laser.style.borderRadius = '50%';
-                    laser.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-                    laser.style.boxShadow = '0 0 10px 2px rgba(255, 0, 0, 0.5)';
-                    laser.style.transition = 'top 0.5s ease, left 0.5s ease';
-                    laser.style.pointerEvents = 'none';
-                    laser.style.zIndex = '9998';
-                    laser.style.left = '{start_x}px';
-                    laser.style.top = '{start_y}px';
-                    document.body.appendChild(laser);
-                    console.log("Laser added to page");
-                    
                     // Thought bubble element
                     const thoughtBubble = document.createElement('div');
                     thoughtBubble.id = 'ai-thought-bubble';
@@ -168,7 +145,7 @@ class CursorManager:
                     
                     return {{
                         success: true,
-                        message: "All cursor elements initialized",
+                        message: "Cursor and thought bubble initialized",
                         position: {{ x: {start_x}, y: {start_y} }}
                     }};
                 }} catch (error) {{
@@ -224,7 +201,6 @@ class CursorManager:
                     console.log("Moving cursor to {x}, {y}");
                     
                     const svgCursor = document.getElementById('ai-cursor');
-                    const laser = document.getElementById('ai-laser');
                     const thoughtBubble = document.getElementById('ai-thought-bubble');
                     
                     if (svgCursor) {{
@@ -232,22 +208,6 @@ class CursorManager:
                         svgCursor.style.left = "{x}px";
                         svgCursor.style.top = "{y}px";
                         console.log("SVG cursor moved");
-                    }}
-                    
-                    if (laser) {{
-                        laser.style.transition = 'top 0.5s ease, left 0.5s ease';
-                        laser.style.left = "{x}px";
-                        laser.style.top = "{y}px";
-                        
-                        // Add a pulse effect
-                        laser.style.transform = 'scale(1.5)';
-                        laser.style.opacity = '1';
-                        setTimeout(() => {{
-                            laser.style.transform = 'scale(1)';
-                            laser.style.opacity = '0.7';
-                        }}, 300);
-                        
-                        console.log("Laser moved");
                     }}
                     
                     // Move thought bubble with cursor
@@ -262,7 +222,6 @@ class CursorManager:
                         success: true,
                         elementsFound: {{
                             svgCursor: !!svgCursor,
-                            laser: !!laser,
                             thoughtBubble: !!thoughtBubble
                         }},
                         position: {{ x: {x}, y: {y} }}
@@ -341,7 +300,7 @@ class CursorManager:
         try:
             result = await self.current_page.evaluate("""() => {
                 try {
-                    const elements = ['ai-cursor', 'ai-laser', 'ai-thought-bubble'];
+                    const elements = ['ai-cursor', 'ai-thought-bubble'];
                     let removed = 0;
                     
                     elements.forEach(id => {
@@ -391,7 +350,7 @@ class CursorManager:
             # Remove cursor elements from this page
             removed = await page.evaluate("""() => {
                 try {
-                    const elements = ['ai-cursor', 'ai-laser', 'ai-thought-bubble'];
+                    const elements = ['ai-cursor', 'ai-thought-bubble'];
                     let removed = 0;
                     
                     elements.forEach(id => {
@@ -461,7 +420,7 @@ class CursorManager:
                     # Remove cursor elements from this page
                     removed = await page.evaluate("""() => {
                         try {
-                            const elements = ['ai-cursor', 'ai-laser', 'ai-thought-bubble'];
+                            const elements = ['ai-cursor', 'ai-thought-bubble'];
                             let removed = 0;
                             
                             elements.forEach(id => {

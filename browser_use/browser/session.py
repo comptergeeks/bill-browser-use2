@@ -3504,6 +3504,14 @@ class BrowserSession(BaseModel):
 		if url and not self._is_url_allowed(url):
 			raise BrowserError(f'Cannot create new tab with non-allowed URL: {url}')
 
+		# Remove cursor from current page before creating new tab
+		if self.agent_current_page:
+			try:
+				removal_result = await self.cursor_manager.remove_cursor_from_page(self.agent_current_page)
+				self.logger.debug(f"Removed cursor from current page before new tab: {removal_result}")
+			except Exception as e:
+				self.logger.debug(f"Failed to remove cursor from current page: {type(e).__name__}: {e}")
+
 		try:
 			assert self.browser_context is not None, 'Browser context is not set'
 			new_page = await self.browser_context.new_page()
