@@ -1935,6 +1935,13 @@ class BrowserSession(BaseModel):
 				self.logger.debug(f"Failed to move cursor to element: {type(e).__name__}: {e}")
 				# Continue with click even if cursor movement fails
 
+			# Animate click effect
+			try:
+				await self.cursor_manager.animate_click()
+			except Exception as e:
+				self.logger.debug(f"Failed to animate click: {type(e).__name__}: {e}")
+				# Continue with click even if animation fails
+
 			async def perform_click(click_func):
 				"""Performs the actual click, handling both download and navigation scenarios."""
 

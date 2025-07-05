@@ -237,11 +237,11 @@ class CursorManager:
                     const svgCursor = document.getElementById('ai-cursor');
                     const thoughtBubble = document.getElementById('ai-thought-bubble');
                     
-                    // Easing function (ease-in-out cubic)
-                    const easeInOutCubic = (t) => {{
+                    // Easing function (ease-in-out quart - more natural)
+                    const easeInOutQuart = (t) => {{
                         return t < 0.5 
-                            ? 4 * t * t * t 
-                            : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                            ? 8 * t * t * t * t 
+                            : 1 - Math.pow(-2 * t + 2, 4) / 2;
                     }};
                     
                     if (svgCursor) {{
@@ -261,7 +261,7 @@ class CursorManager:
                         function animate(currentTime) {{
                             const elapsed = currentTime - startTime;
                             const progress = Math.min(elapsed / duration, 1);
-                            const easedProgress = easeInOutCubic(progress);
+                            const easedProgress = easeInOutQuart(progress);
                             
                             const currentX = startX + (targetX - startX) * easedProgress;
                             const currentY = startY + (targetY - startY) * easedProgress;
@@ -356,6 +356,90 @@ class CursorManager:
         except Exception as e:
             logger.error(f"Error updating thought bubble: {str(e)}")
             return False
+
+    async def animate_click(self) -> Dict:
+        """
+        Animate a click effect on the cursor.
+        
+        Returns:
+            Dict: Result of the click animation
+        """
+        if not self.current_page:
+            return {"success": False, "error": "No current page set"}
+            
+        try:
+            logger.debug("Animating cursor click")
+            
+            # Check if cursor exists on page
+            cursor_exists = await self.current_page.evaluate("""() => {
+                return !!document.getElementById("ai-cursor");
+            }""")
+            
+            if not cursor_exists:
+                logger.debug("Cursor not found, cannot animate click")
+                return {"success": False, "error": "Cursor not found"}
+            
+            # Animate click effect
+            result = await self.current_page.evaluate("""() => {
+                try {
+                    const svgCursor = document.getElementById('ai-cursor');
+                    if (!svgCursor) return { success: false, error: "Cursor not found" };
+                    
+                    // Animate the cursor with a more pronounced click effect
+                    const originalTransform = svgCursor.style.transform || '';
+                    
+                    // Use requestAnimationFrame for smooth animation
+                    let startTime = performance.now();
+                    const duration = 200; // 200ms total animation
+                    
+                    function animateClick(currentTime) {
+                        const elapsed = currentTime - startTime;
+                        const progress = Math.min(elapsed / duration, 1);
+                        
+                        // Create a smooth scale animation: down to 0.7, then back to 1
+                        let scale;
+                        if (progress < 0.5) {
+                            // First half: scale down to 0.7
+                            scale = 1 - (progress * 2) * 0.3; // From 1 to 0.7
+                        } else {
+                            // Second half: scale back up to 1
+                            scale = 0.7 + ((progress - 0.5) * 2) * 0.3; // From 0.7 to 1
+                        }
+                        
+                        // Apply the scale transformation
+                        svgCursor.style.transform = originalTransform + ` scale(${scale})`;
+                        
+                        if (progress < 1) {
+                            requestAnimationFrame(animateClick);
+                        } else {
+                            // Reset to original transform
+                            svgCursor.style.transform = originalTransform;
+                        }
+                    }
+                    
+                    requestAnimationFrame(animateClick);
+                    
+                    return {
+                        success: true,
+                        message: "Click animation completed"
+                    };
+                } catch (error) {
+                    console.error("Error animating click:", error);
+                    return {
+                        success: false,
+                        error: error.toString()
+                    };
+                }
+            }""")
+            
+            # Wait for animation to complete
+            await asyncio.sleep(0.2)  # 200ms animation duration
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error animating click: {str(e)}")
+            return {"success": False, "error": str(e)}
     
     async def remove_cursor(self) -> bool:
         """
