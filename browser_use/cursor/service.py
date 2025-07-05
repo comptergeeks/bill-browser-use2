@@ -226,8 +226,8 @@ class CursorManager:
             
             # Calculate distance for dynamic duration
             distance = ((x - current_pos['x']) ** 2 + (y - current_pos['y']) ** 2) ** 0.5
-            # Adjust duration based on distance (min 300ms, max 800ms)
-            duration = min(800, max(300, int(distance * 0.8)))
+            # Adjust duration based on distance (min 500ms, max 800ms)
+            duration = min(800, max(500, int(distance * 0.8)))
             
             # Move cursor elements with smooth animation
             result = await self.current_page.evaluate(f"""() => {{
@@ -388,6 +388,13 @@ class CursorManager:
                     // Animate the cursor with a more pronounced click effect
                     const originalTransform = svgCursor.style.transform || '';
                     
+                    // Easing function (ease-in-out quart - same as cursor movement)
+                    const easeInOutQuart = (t) => {
+                        return t < 0.5 
+                            ? 8 * t * t * t * t 
+                            : 1 - Math.pow(-2 * t + 2, 4) / 2;
+                    };
+                    
                     // Use requestAnimationFrame for smooth animation
                     let startTime = performance.now();
                     const duration = 200; // 200ms total animation
@@ -395,15 +402,16 @@ class CursorManager:
                     function animateClick(currentTime) {
                         const elapsed = currentTime - startTime;
                         const progress = Math.min(elapsed / duration, 1);
+                        const easedProgress = easeInOutQuart(progress);
                         
                         // Create a smooth scale animation: down to 0.7, then back to 1
                         let scale;
-                        if (progress < 0.5) {
+                        if (easedProgress < 0.5) {
                             // First half: scale down to 0.7
-                            scale = 1 - (progress * 2) * 0.3; // From 1 to 0.7
+                            scale = 1 - (easedProgress * 2) * 0.3; // From 1 to 0.7
                         } else {
                             // Second half: scale back up to 1
-                            scale = 0.7 + ((progress - 0.5) * 2) * 0.3; // From 0.7 to 1
+                            scale = 0.7 + ((easedProgress - 0.5) * 2) * 0.3; // From 0.7 to 1
                         }
                         
                         // Apply the scale transformation
