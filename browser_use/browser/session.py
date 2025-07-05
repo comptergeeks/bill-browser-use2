@@ -51,6 +51,8 @@ from browser_use.dom.clickable_element_processor.service import ClickableElement
 from browser_use.dom.service import DomService
 from browser_use.dom.views import DOMElementNode, SelectorMap
 from browser_use.utils import match_url_with_domain_pattern, merge_dicts, retry, time_execution_async, time_execution_sync
+from browser_use.cursor.service import CursorManager
+
 
 _GLOB_WARNING_SHOWN = False  # used inside _is_url_allowed to avoid spamming the logs with the same warning multiple times
 
@@ -119,6 +121,7 @@ def require_initialization(func):
 
 
 DEFAULT_BROWSER_PROFILE = BrowserProfile()
+
 
 
 @dataclass
@@ -220,6 +223,8 @@ class BrowserSession(BaseModel):
 	_downloaded_files: list[str] = PrivateAttr(default_factory=list)
 	_original_browser_session: Any = PrivateAttr(default=None)  # Reference to prevent GC of the original session when copied
 	_owns_browser_resources: bool = PrivateAttr(default=True)  # True if this instance owns and should clean up browser resources
+	_cursor_manager: CursorManager | None = PrivateAttr(default=None)
+
 
 	@model_validator(mode='after')
 	def apply_session_overrides_to_profile(self) -> Self:
@@ -239,6 +244,13 @@ class BrowserSession(BaseModel):
 		# self.browser_profile._in_use_by_session = self
 
 		return self
+
+	@property
+	def cursor_manager(self) -> CursorManager:
+		"""Get or create cursor manager instance"""
+		if self._cursor_manager is None:
+			self._cursor_manager = CursorManager()
+		return self._cursor_manager
 
 	@property
 	def logger(self) -> logging.Logger:
@@ -308,6 +320,8 @@ class BrowserSession(BaseModel):
 			await self._setup_viewports()
 			await self._setup_current_page_change_listeners()
 			await self._start_context_tracing()
+
+
 
 			self.initialized = True
 			return self
@@ -1780,6 +1794,14 @@ class BrowserSession(BaseModel):
 			self.agent_current_page = first_real_page
 			# If human_current_page hasn't been set (e.g., on first run) set it to the same page
 			self.human_current_page = self.human_current_page or first_real_page
+			
+			# Ensure cursor is visible on the current page
+			try:
+				await self.cursor_manager.handle_page_switch(self.agent_current_page) 
+				self.logger.debug(f"Cursor initialized on current page: {self.agent_current_page.url}")
+			except Exception as e:
+				self.logger.debug(f"Failed to initialize cursor on current page: {type(e).__name__}: {e}")
+			
 			return self.agent_current_page
 
 		ai_url = data.get('syncedPages', {}).get('aiUrl')
@@ -1799,6 +1821,13 @@ class BrowserSession(BaseModel):
 			self.agent_current_page = first_real_page
 		if self.human_current_page is None:
 			self.human_current_page = first_real_page
+
+		# Ensure cursor is visible on the current page
+		try:
+			await self.cursor_manager.handle_page_switch(self.agent_current_page)
+			self.logger.debug(f"Cursor initialized on current page: {self.agent_current_page.url}")
+		except Exception as e:
+			self.logger.debug(f"Failed to initialize cursor on current page: {type(e).__name__}: {e}")
 
 		return self.agent_current_page
 
@@ -3470,6 +3499,8 @@ class BrowserSession(BaseModel):
 	async def create_new_tab(self, url: str | None = None) -> Page:
 		"""Create a new tab and optionally navigate to a URL - ELECTRON VERSION"""
 
+		
+
 		if url and not self._is_url_allowed(url):
 			raise BrowserError(f'Cannot create new tab with non-allowed URL: {url}')
 
@@ -3494,13 +3525,28 @@ class BrowserSession(BaseModel):
 
 		# Use Electron's window.newTab() function to create the tab
 		handler_of_events = self.get_first_real_page()
-		await handler_of_events.evaluate('async (url) => { return await window.createNewTab({ url }); }', url)
+		await handler_of_events.evaluate('async (url) => { return await window.createNewAiTab({ url }); }', url)
 
 		# Get updated list of tabs after creation
 		new_tabs = self.get_all_filtered_tabs()
 		new_page = new_tabs[len(new_tabs) - 1]
-
+		
+		# Initialize cursor display for the new tab
 		self.agent_current_page = new_page
+
+		
+		try:
+			# Type cast to handle playwright/patchright compatibility
+			print(f"about to initialize cursor display for {new_page.url}")
+
+			# also add the funciton to remove the cursor on the current tab
+			await self.cursor_manager.initialize_cursor_display(new_page)  # type: ignore
+		except Exception as e:
+			self.logger.debug(f"Failed to initialize cursor display: {type(e).__name__}: {e}")
+
+
+		# Ensure cursor is on the new tab
+		
 
 		return new_page
 

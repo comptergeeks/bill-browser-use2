@@ -120,6 +120,7 @@ class Controller(Generic[Context]):
 			try:
 
 				if params.new_tab:
+					# add cursor display here
 					# this function is broken 
 					# Open in new tab (logic from open_tab function)
 					page = await browser_session.create_new_tab(params.url)
