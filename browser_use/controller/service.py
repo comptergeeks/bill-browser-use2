@@ -178,7 +178,7 @@ class Controller(Generic[Context]):
 
 		# Element Interaction Actions
 		@self.registry.action('Click element by index', param_model=ClickElementAction)
-		async def click_element_by_index(params: ClickElementAction, browser_session: BrowserSession):
+		async def click_element_by_index(params: ClickElementAction, browser_session: BrowserSession, task: str | None = None):
 			# Browser is now a BrowserSession itself
 
 			# Check if element exists in current selector map
@@ -211,7 +211,7 @@ class Controller(Generic[Context]):
 
 			try:
 				assert element_node is not None, f'Element with index {params.index} does not exist'
-				download_path = await browser_session._click_element_node(element_node)
+				download_path = await browser_session._click_element_node(element_node, task)
 				if download_path:
 					emoji = '💾'
 					msg = f'Downloaded file to {download_path}'
@@ -1093,6 +1093,7 @@ Explain the content of the page and that the requested information is not availa
 		file_system: FileSystem | None = None,
 		#
 		context: Context | None = None,
+		task: str | None = None,
 	) -> ActionResult:
 		"""Execute an action"""
 
@@ -1135,6 +1136,7 @@ Explain the content of the page and that the requested information is not availa
 						available_file_paths=available_file_paths,
 						file_system=file_system,
 						context=context,
+						task=task,
 					)
 
 				# Laminar.set_span_output(result)

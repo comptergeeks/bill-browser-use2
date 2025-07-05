@@ -67,7 +67,7 @@ llm = ChatOpenAI(
 
 
 async def main():
-    task = "open pokemon showdown in a new tab and play game until u win."
+    task = "open chess.com and play a game against a random opponent play until you win.."
     controller = Controller()
 
     # Re-use an already running Chromium instance if one is exposed via CDP.

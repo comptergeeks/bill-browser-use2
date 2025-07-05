@@ -307,7 +307,8 @@ async def end_server():
         await websocket_connection.close()
         websocket_connection = None
     if server:
-        await server.close()
+        server.close()
+        await server.wait_closed()
         server = None
 
 # =============================================
@@ -556,16 +557,28 @@ async def handle_websocket(websocket):
                                     if hasattr(task._agent.state, 'max_failures'):
                                         task._agent.state.max_failures = 0
                                     
-                                    # Try to interrupt any ongoing browser operations
-                                    try:
-                                        if hasattr(task._agent, 'browser_session') and task._agent.browser_session:
-                                            browser_session = task._agent.browser_session
-                                            if hasattr(browser_session, 'agent_current_page') and browser_session.agent_current_page:
-                                                print("Attempting to stop current page operations")
-                                                page = browser_session.agent_current_page
-                                                await page.evaluate('window.stop()')
-                                    except Exception as e:
-                                        print(f"Error stopping page operations: {e}")
+                                                                    # Try to interrupt any ongoing browser operations
+                                try:
+                                    if hasattr(task._agent, 'browser_session') and task._agent.browser_session:
+                                        browser_session = task._agent.browser_session
+                                        
+                                        # Clean up cursor from all pages
+                                        try:
+                                            if hasattr(browser_session, 'cursor_manager') and browser_session.cursor_manager:
+                                                if hasattr(browser_session, 'browser_context') and browser_session.browser_context:
+                                                    await browser_session.cursor_manager.cleanup_and_reset(browser_session.browser_context)
+                                                else:
+                                                    await browser_session.cursor_manager.cleanup_and_reset()
+                                                print(f"Cleaned up cursor for killed agent task in tab {tab_id}")
+                                        except Exception as e:
+                                            print(f"Error cleaning up cursor: {e}")
+                                        
+                                        if hasattr(browser_session, 'agent_current_page') and browser_session.agent_current_page:
+                                            print("Attempting to stop current page operations")
+                                            page = browser_session.agent_current_page
+                                            await page.evaluate('window.stop()')
+                                except Exception as e:
+                                    print(f"Error stopping page operations: {e}")
                                     
                                     # Call the stop method which includes resource cleanup
                                     try:
@@ -936,7 +949,7 @@ async def main(task_message, tab_id=None):
     )
     
     # Store tab_id with the agent so our patches can check it
-    agent._tab_id = tab_id
+    setattr(agent, '_tab_id', tab_id)
     
     # Execute the agent's task and capture the result
     try:
@@ -946,7 +959,7 @@ async def main(task_message, tab_id=None):
         try:
             # Store reference to the agent for potential cancellation
             if current_browser_agent_task:
-                current_browser_agent_task._agent = agent
+                setattr(current_browser_agent_task, '_agent', agent)
             
             # Run the agent and cancellation checker concurrently
             agent_task = asyncio.create_task(agent.run())
@@ -982,7 +995,9 @@ async def main(task_message, tab_id=None):
                 
                 # Try to call agent stop method
                 try:
-                    await agent.stop()
+                    stop_result = agent.stop()
+                    if asyncio.iscoroutine(stop_result):
+                        await stop_result
                     print(f"Successfully stopped agent for tab {tab_id}")
                 except Exception as e:
                     print(f"Error stopping agent for tab {tab_id}: {e}")
@@ -997,7 +1012,9 @@ async def main(task_message, tab_id=None):
             try:
                 agent.state.stopped = True
                 agent.state.consecutive_failures = 999
-                await agent.stop()
+                stop_result = agent.stop()
+                if asyncio.iscoroutine(stop_result):
+                    await stop_result
                 print(f"Agent stopped due to cancellation for tab {tab_id}")
             except Exception as e:
                 print(f"Error stopping cancelled agent for tab {tab_id}: {e}")

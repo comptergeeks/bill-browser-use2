@@ -1347,6 +1347,7 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 					sensitive_data=self.sensitive_data,
 					available_file_paths=self.settings.available_file_paths,
 					context=self.context,
+					task=self.task,
 				)
 
 				results.append(result)

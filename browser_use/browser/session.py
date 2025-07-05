@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import tempfile
+import replicate
 import time
 from dataclasses import dataclass
 from functools import wraps
@@ -1928,7 +1929,7 @@ class BrowserSession(BaseModel):
 
 	@require_initialization
 	@time_execution_async('--click_element_node')
-	async def _click_element_node(self, element_node: DOMElementNode) -> str | None:
+	async def _click_element_node(self, element_node: DOMElementNode, task: str | None = None) -> str | None:
 		"""
 		Optimized method to click an element using xpath.
 		"""
@@ -2035,24 +2036,69 @@ class BrowserSession(BaseModel):
 					except URLNotAllowedError as e:
 						raise e
 					except Exception as e:
+						# add the screenshot poll --> 
 						# Final fallback - try clicking by coordinates if available
-						if element_node.viewport_coordinates and element_node.viewport_coordinates.center:
-							try:
-								self.logger.warning(
-									f'⚠️ Element click failed, falling back to coordinate click at ({element_node.viewport_coordinates.center.x}, {element_node.viewport_coordinates.center.y})'
-								)
-								await page.mouse.click(
-									element_node.viewport_coordinates.center.x, element_node.viewport_coordinates.center.y
-								)
-								try:
-									await page.wait_for_load_state()
-								except Exception:
-									pass
-								await self._check_and_handle_navigation(page)
-								return None  # Success
-							except Exception as coord_e:
-								self.logger.error(f'Coordinate click also failed: {type(coord_e).__name__}: {coord_e}')
-						raise Exception(f'Failed to click element: {type(e).__name__}: {e}')
+						# hit the replicate end point
+
+
+						# vision fallback
+						# it's gonna be quite slow for now as the model inference call takes about one minute.
+						# one thing to consider is what happens when this is on a page that has a canvas to maybe default to this
+						# or an iframe
+
+						print('falling back to vision click, everything failed kms')
+						deployment = replicate.deployments.get("comptergeeks/molmo-i-love")
+
+						# Take screenshot and convert to base64 data URI
+						screenshot_bytes = await page.screenshot()
+						screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+						data_uri = f"data:image/png;base64,{screenshot_b64}"
+
+						prediction = deployment.predictions.create(
+							input={
+								"image": data_uri,
+								"text": task or f"Click on the {element_node.tag_name} element that should be clicked"
+							}
+						)
+
+						# Wait for prediction to complete
+						prediction.wait()
+
+						# Parse the result to get coordinates
+						if prediction.status == 'succeeded':
+							output = prediction.output
+							# Parse point coordinates from the output using regex similar to your JS code
+							import re
+							point_regex = r'<point\s+x="([\d.]+)"\s+y="([\d.]+)"\s+alt="([^"]+)">([^<]+)</point>'
+							match = re.search(point_regex, output)
+							
+							if match:
+								x_percent = float(match.group(1))
+								y_percent = float(match.group(2))
+								
+								# Get viewport dimensions
+								viewport_size = page.viewport_size
+								if viewport_size:
+									# Convert percentage to pixels
+									x_pixel = int((x_percent / 100) * viewport_size['width'])
+									y_pixel = int((y_percent / 100) * viewport_size['height'])
+									
+									self.logger.info(f'🎯 Vision model suggests clicking at ({x_pixel}, {y_pixel})')
+									
+									# Click at the suggested coordinates
+									await page.mouse.click(x_pixel, y_pixel)
+									try:
+										await page.wait_for_load_state()
+									except Exception:
+										pass
+									await self._check_and_handle_navigation(page)
+									return None  # Success
+								else:
+									self.logger.error('Could not get viewport size for coordinate conversion')
+							else:
+								self.logger.error(f'Could not parse coordinates from vision model output: {output}')
+						else:
+							self.logger.error(f'Vision model prediction failed: {prediction.status}')
 
 		except URLNotAllowedError as e:
 			raise e

@@ -52,6 +52,7 @@ class Registry(Generic[Context]):
 			'available_file_paths': list,
 			'has_sensitive_data': bool,
 			'file_system': FileSystem,
+			'task': None,  # Allow any type for task parameter
 		}
 
 	def _normalize_action_function_signature(
@@ -320,6 +321,7 @@ class Registry(Generic[Context]):
 		available_file_paths: list[str] | None = None,
 		#
 		context: Context | None = None,
+		task: str | None = None,
 	) -> Any:
 		"""Execute a registered action with simplified parameter handling"""
 		if action_name not in self.registry.actions:
@@ -354,6 +356,7 @@ class Registry(Generic[Context]):
 				'available_file_paths': available_file_paths,
 				'has_sensitive_data': action_name == 'input_text' and bool(sensitive_data),
 				'file_system': file_system,
+				'task': task,
 			}
 
 			# Handle async page parameter if needed
