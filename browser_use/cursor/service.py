@@ -19,7 +19,7 @@ class CursorManager:
         """Initialize the cursor manager with default settings"""
         self.cursor_positions: Dict[str, Tuple[int, int]] = {}  # Store positions per page URL
         self.current_page: Optional[Page] = None
-        self.cursor_color = "#6B1ECA"  # Default purple color
+        self.cursor_color = "#0066cc"  # Default blue color
         self.cursor_initialized = False
         
     async def initialize_cursor_display(self, browser_page: Page) -> Dict:
@@ -39,16 +39,29 @@ class CursorManager:
             # Get stored position or default to (0, 0)
             # get the position of the center of the page
             # and then place it there
-            stored_position = self.cursor_positions.get(page_url, (0, 0))
-            start_x, start_y = stored_position
-            
-            # Get viewport size for debugging
+            # get the center of the page
             viewport_size = await browser_page.evaluate("""() => {
                 return {
                     width: window.innerWidth,
                     height: window.innerHeight
                 };
             }""")
+            
+            center_x = viewport_size['width'] / 2 # type: ignore
+            center_y = viewport_size['height'] / 2 # type: ignore
+
+            # get the position of the center of the page
+            start_x = center_x
+            start_y = center_y
+
+            stored_position = self.cursor_positions.get(page_url, (start_x, start_y))
+            start_x, start_y = stored_position
+            
+            # Convert cursor color to RGB for thought bubble
+            r, g, b = self._hex_to_rgb(self.cursor_color)
+            
+            # Get viewport size for debugging
+
             
             logger.debug(f"Initializing cursor on {page_url} at position ({start_x}, {start_y})")
             logger.debug(f"Viewport size: {viewport_size}")
@@ -117,9 +130,9 @@ class CursorManager:
                     thoughtBubble.style.position = 'fixed';
                     thoughtBubble.style.width = '200px';
                     thoughtBubble.style.padding = '8px';
-                    thoughtBubble.style.background = 'rgba(128, 0, 255, 0.7)';
+                    thoughtBubble.style.background = 'rgba({r}, {g}, {b}, 0.7)';
                     thoughtBubble.style.color = 'white';
-                    thoughtBubble.style.boxShadow = '0 2px 10px rgba(128, 0, 255, 0.3)';
+                    thoughtBubble.style.boxShadow = '0 2px 10px rgba({r}, {g}, {b}, 0.3)';
                     thoughtBubble.style.borderRadius = '8px';
                     thoughtBubble.style.fontSize = '12px';
                     thoughtBubble.style.transition = 'top 0.5s ease, left 0.5s ease';
@@ -529,6 +542,117 @@ class CursorManager:
             Tuple of (x, y) coordinates, defaults to (0, 0) if not found
         """
         return self.cursor_positions.get(page_url, (0, 0))
+    
+    def _hex_to_rgb(self, hex_color: str) -> Tuple[int, int, int]:
+        """
+        Convert hex color to RGB values.
+        
+        Args:
+            hex_color: Hex color string (e.g., "#FF0000" or "#f00")
+            
+        Returns:
+            Tuple of (r, g, b) values
+        """
+        # Remove the # if present
+        hex_color = hex_color.lstrip('#')
+        
+        # Handle 3-character hex codes by expanding them
+        if len(hex_color) == 3:
+            hex_color = ''.join([c*2 for c in hex_color])
+        
+        # Convert to RGB
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            return (r, g, b)
+        except (ValueError, IndexError):
+            # Fallback to blue if invalid hex
+            return (0, 102, 204)  # #0066cc
+    
+    async def update_thought_bubble_color(self) -> bool:
+        """
+        Update the thought bubble color to match the current cursor color.
+        
+        Returns:
+            bool: True if update was successful
+        """
+        if not self.current_page:
+            return False
+            
+        try:
+            # Convert cursor color to RGB
+            r, g, b = self._hex_to_rgb(self.cursor_color)
+            
+            result = await self.current_page.evaluate(f"""() => {{
+                try {{
+                    const thoughtBubble = document.getElementById('ai-thought-bubble');
+                    if (thoughtBubble) {{
+                        thoughtBubble.style.background = 'rgba({r}, {g}, {b}, 0.7)';
+                        thoughtBubble.style.boxShadow = '0 2px 10px rgba({r}, {g}, {b}, 0.3)';
+                        return true;
+                    }}
+                    return false;
+                }} catch (error) {{
+                    console.error("Error updating thought bubble color:", error);
+                    return false;
+                }}
+            }}""")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error updating thought bubble color: {str(e)}")
+            return False
+    
+    async def update_cursor_color(self) -> bool:
+        """
+        Update both the cursor arrow and thought bubble color to match the current cursor color.
+        
+        Returns:
+            bool: True if update was successful
+        """
+        if not self.current_page:
+            return False
+            
+        try:
+            # Convert cursor color to RGB for thought bubble
+            r, g, b = self._hex_to_rgb(self.cursor_color)
+            
+            result = await self.current_page.evaluate(f"""() => {{
+                try {{
+                    const cursor = document.getElementById('ai-cursor');
+                    const thoughtBubble = document.getElementById('ai-thought-bubble');
+                    let updated = 0;
+                    
+                    // Update cursor arrow color
+                    if (cursor) {{
+                        const polygon = cursor.querySelector('polygon');
+                        if (polygon) {{
+                            polygon.setAttribute('fill', '{self.cursor_color}');
+                            updated++;
+                        }}
+                    }}
+                    
+                    // Update thought bubble color
+                    if (thoughtBubble) {{
+                        thoughtBubble.style.background = 'rgba({r}, {g}, {b}, 0.7)';
+                        thoughtBubble.style.boxShadow = '0 2px 10px rgba({r}, {g}, {b}, 0.3)';
+                        updated++;
+                    }}
+                    
+                    return updated > 0;
+                }} catch (error) {{
+                    console.error("Error updating cursor colors:", error);
+                    return false;
+                }}
+            }}""")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error updating cursor colors: {str(e)}")
+            return False
     
     def set_cursor_color(self, color: str):
         """
