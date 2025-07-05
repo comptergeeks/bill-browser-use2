@@ -1920,6 +1920,24 @@ class BrowserSession(BaseModel):
 			if element_handle is None:
 				raise Exception(f'Element: {repr(element_node)} not found')
 
+			# Get element's bounding box to move cursor to its center
+			try:
+				bbox = await element_handle.bounding_box()
+				if bbox and bbox['width'] > 0 and bbox['height'] > 0:
+					# Calculate center position
+					center_x = bbox['x'] + bbox['width'] / 2
+					center_y = bbox['y'] + bbox['height'] / 2
+					
+					# Move cursor to element's center position
+					await self.cursor_manager.move_cursor(int(center_x), int(center_y))
+					self.logger.debug(f"Moved cursor to element at ({center_x}, {center_y}) before click")
+					
+					# Small delay to make the cursor movement visible
+					await asyncio.sleep(0.1)
+			except Exception as e:
+				self.logger.debug(f"Failed to move cursor to element: {type(e).__name__}: {e}")
+				# Continue with click even if cursor movement fails
+
 			async def perform_click(click_func):
 				"""Performs the actual click, handling both download and navigation scenarios."""
 
@@ -3420,6 +3438,24 @@ class BrowserSession(BaseModel):
 					await element_handle.scroll_into_view_if_needed(timeout=1000)
 			except Exception:
 				pass
+
+			# Get element's bounding box to move cursor to its position
+			try:
+				bbox = await element_handle.bounding_box()
+				if bbox and bbox['width'] > 0 and bbox['height'] > 0:
+					# Calculate center position
+					center_x = bbox['x'] + bbox['width'] / 2
+					center_y = bbox['y'] + bbox['height'] / 2
+					
+					# Move cursor to element's center position
+					await self.cursor_manager.move_cursor(int(center_x), int(center_y))
+					self.logger.debug(f"Moved cursor to input element at ({center_x}, {center_y})")
+					
+					# Small delay to make the cursor movement visible
+					await asyncio.sleep(0.1)
+			except Exception as e:
+				self.logger.debug(f"Failed to move cursor to input element: {type(e).__name__}: {e}")
+				# Continue with input even if cursor movement fails
 
 			# let's first try to click and type
 			try:

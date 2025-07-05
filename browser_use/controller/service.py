@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
@@ -491,6 +492,22 @@ Explain the content of the page and that the requested information is not availa
 			# Set direction based on down parameter
 			dy = dy_result if params.down else -(dy_result or 0)
 
+			# Move cursor to center of viewport to indicate scroll action
+			try:
+				viewport_width = await page.evaluate('() => window.innerWidth')
+				viewport_height = await page.evaluate('() => window.innerHeight')
+				center_x = viewport_width // 2
+				center_y = viewport_height // 2
+				
+				# Move cursor to center
+				await browser_session.cursor_manager.move_cursor(center_x, center_y)
+				logger.debug(f"Moved cursor to viewport center ({center_x}, {center_y}) for scroll")
+				
+				# Small delay to make cursor movement visible
+				await asyncio.sleep(0.1)
+			except Exception as e:
+				logger.debug(f"Failed to move cursor for scroll: {type(e).__name__}: {e}")
+
 			try:
 				await browser_session._scroll_container(cast(int, dy))
 			except Exception as e:
@@ -531,7 +548,7 @@ Explain the content of the page and that the requested information is not availa
 		@self.registry.action(
 			description='Scroll to a text in the current page',
 		)
-		async def scroll_to_text(text: str, page: Page):  # type: ignore
+		async def scroll_to_text(text: str, page: Page, browser_session: BrowserSession):  # type: ignore
 			try:
 				# Try different locator strategies
 				locators = [
@@ -552,6 +569,16 @@ Explain the content of the page and that the requested information is not availa
 						if is_visible and bbox is not None and bbox['width'] > 0 and bbox['height'] > 0:
 							await element.scroll_into_view_if_needed()
 							await asyncio.sleep(0.5)  # Wait for scroll to complete
+							
+							# Move cursor to the found text
+							try:
+								center_x = bbox['x'] + bbox['width'] / 2
+								center_y = bbox['y'] + bbox['height'] / 2
+								await browser_session.cursor_manager.move_cursor(int(center_x), int(center_y))
+								logger.debug(f"Moved cursor to text at ({center_x}, {center_y})")
+							except Exception as e:
+								logger.debug(f"Failed to move cursor to text: {type(e).__name__}: {e}")
+							
 							msg = f'🔍  Scrolled to text: {text}'
 							logger.info(msg)
 							return ActionResult(
