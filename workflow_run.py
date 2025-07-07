@@ -120,6 +120,8 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 if not openai_api_key:
     print("⚠️  OPENAI_API_KEY not found in environment – ChatOpenAI will rely on runtime env var.")
 
+
+
 # Build kwargs dynamically: only pass `api_key` if we actually found one; otherwise
 # let the OpenAI client fall back to the environment variable.
 

@@ -211,7 +211,7 @@ class Controller(Generic[Context]):
 
 			try:
 				assert element_node is not None, f'Element with index {params.index} does not exist'
-				download_path = await browser_session._click_element_node(element_node, task)
+				download_path = await browser_session._click_element_node(element_node)
 				if download_path:
 					emoji = '💾'
 					msg = f'Downloaded file to {download_path}'
