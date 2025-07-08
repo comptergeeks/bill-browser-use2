@@ -1810,10 +1810,18 @@ class BrowserSession(BaseModel):
 		# Match URLs to actual pages and set agent/human current pages
 		for page in self.browser_context.pages:
 			if page.url == ai_url:
-				self.agent_current_page = page
+				# FIXED: Only allow non-internal pages to be set as agent_current_page
+				if not self._should_filter_internal_url(page.url):
+					self.agent_current_page = page
+				else:
+					self.logger.debug(f"Ignoring internal URL for agent_current_page: {page.url}")
 				continue
 			if page.url == human_url:
-				self.human_current_page = page
+				# FIXED: Only allow non-internal pages to be set as human_current_page  
+				if not self._should_filter_internal_url(page.url):
+					self.human_current_page = page
+				else:
+					self.logger.debug(f"Ignoring internal URL for human_current_page: {page.url}")
 				continue
 
 		# Ensure we always return a valid Page object for the agent
@@ -3549,6 +3557,14 @@ class BrowserSession(BaseModel):
 
 		if page_id >= len(pages):
 			raise BrowserError(f'No tab found with page_id: {page_id}')
+
+		# Remove cursor from current page before switching
+		if self.agent_current_page:
+			try:
+				removal_result = await self.cursor_manager.remove_cursor_from_page(self.agent_current_page)
+				self.logger.debug(f"Removed cursor from current page before tab switch: {removal_result}")
+			except Exception as e:
+				self.logger.debug(f"Failed to remove cursor from current page: {type(e).__name__}: {e}")
 
 		# Check if the tab's URL is allowed before switching
 		##
