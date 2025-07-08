@@ -564,14 +564,20 @@ async def handle_websocket(websocket):
                                     if hasattr(task._agent, 'browser_session') and task._agent.browser_session:
                                         browser_session = task._agent.browser_session
                                         
-                                        # Clean up cursor from all pages
+                                        # Clean up cursor from all pages with enhanced error handling
                                         try:
                                             if hasattr(browser_session, 'cursor_manager') and browser_session.cursor_manager:
+                                                print(f"Cleaning up cursors for killed agent task in tab {tab_id}")
                                                 if hasattr(browser_session, 'browser_context') and browser_session.browser_context:
+                                                    # Remove cursors from all pages in the browser context
+                                                    cleanup_result = await browser_session.cursor_manager.remove_cursor_from_all_pages(browser_session.browser_context)
+                                                    print(f"Cursor cleanup result: {cleanup_result}")
+                                                    # Also do a complete reset to clear internal state
                                                     await browser_session.cursor_manager.cleanup_and_reset(browser_session.browser_context)
                                                 else:
+                                                    # Fallback to basic cleanup if no browser context
                                                     await browser_session.cursor_manager.cleanup_and_reset()
-                                                print(f"Cleaned up cursor for killed agent task in tab {tab_id}")
+                                                print(f"Successfully cleaned up cursors for killed agent task in tab {tab_id}")
                                         except Exception as e:
                                             print(f"Error cleaning up cursor: {e}")
                                         
@@ -749,18 +755,31 @@ async def handle_websocket(websocket):
 
                 else:
                     # Handle other potential control messages
-                    print('Processing unknown message type')
-                    # Default to starting as a task if type is unknown
-                    asyncio.create_task(main(message))
-                    # Send an immediate ack to the client
-                    await websocket.send(json.dumps({"status": "processing", "message": "Task started"}))
+                    print(f'Processing unknown message type: {data.get("type", "no_type")}')
+                    # FIXED: Don't automatically start agents for unknown message types
+                    # Only start agents for explicit requests, not random messages
+                    message_type = data.get("type")
+                    if message_type and "request" in message_type.lower():
+                        print(f"Starting agent for explicit request type: {message_type}")
+                        asyncio.create_task(main(message))
+                        await websocket.send(json.dumps({"status": "processing", "message": "Task started"}))
+                    else:
+                        print(f"Ignoring unknown message type: {message_type}")
+                        await websocket.send(json.dumps({"status": "ignored", "message": f"Unknown message type: {message_type}"}))
 
             except json.JSONDecodeError:
                 # Handle non-JSON messages
-                print('Received non-JSON message, treating as task')
-                asyncio.create_task(main(message))
-                # Send an immediate ack to the client
-                await websocket.send(json.dumps({"status": "processing", "message": "Task started"}))
+                print(f'Received non-JSON message: {message[:100]}...')
+                # FIXED: Don't automatically start agents for non-JSON messages
+                # Only start agents if it looks like an explicit task request
+                if message and len(message.strip()) > 10 and not message.startswith('{'):
+                    # Looks like a plain text task request
+                    print(f"Starting agent for plain text task: {message[:50]}...")
+                    asyncio.create_task(main(message))
+                    await websocket.send(json.dumps({"status": "processing", "message": "Task started"}))
+                else:
+                    print(f"Ignoring non-JSON message: {message[:50]}...")
+                    await websocket.send(json.dumps({"status": "ignored", "message": "Invalid or empty message"}))
 
             except Exception as e:
                 # Catch other errors during message processing
@@ -782,35 +801,35 @@ async def handle_websocket(websocket):
         if websocket_connection == websocket:
             set_websocket_connection(None)
 
-# Enhanced cancellation check mechanism
-async def check_cancellation(tab_id=None):
-    """A periodic check that needs to be run alongside the agent task to detect cancellation"""
-    global KILL_AGENT_REQUESTED
-    
-    try:
-        # Continue checking until cancellation is requested or task completes
-        while True:
-            # Check for global kill request
-            if KILL_AGENT_REQUESTED:
-                print("Cancellation check detected global kill request - forcing immediate cancellation")
-                raise asyncio.CancelledError("Global kill requested")
-            
-            # Check for tab-specific kill request
-            if tab_id:
-                async with tab_kill_requests_lock:
-                    if tab_id in tab_kill_requests:
-                        print(f"Cancellation check detected tab-specific kill request for {tab_id} - forcing immediate cancellation")
-                        raise asyncio.CancelledError(f"Tab {tab_id} kill requested")
-            
-            # More frequent checks during active operations
-            await asyncio.sleep(0.1)
-    except asyncio.CancelledError:
-        # Allow cancellation of this check task itself
-        print("Cancellation check task itself was cancelled")
-        raise
-    except Exception as e:
-        print(f"Error in cancellation check: {e}")
-        raise
+# Enhanced cancellation check mechanism - COMMENTED OUT DUE TO BUG
+# async def check_cancellation(tab_id=None):
+#     """A periodic check that needs to be run alongside the agent task to detect cancellation"""
+#     global KILL_AGENT_REQUESTED
+#     
+#     try:
+#         # Continue checking until cancellation is requested or task completes
+#         while True:
+#             # Check for global kill request
+#             if KILL_AGENT_REQUESTED:
+#                 print("Cancellation check detected global kill request - forcing immediate cancellation")
+#                 raise asyncio.CancelledError("Global kill requested")
+#             
+#             # Check for tab-specific kill request
+#             if tab_id:
+#                 async with tab_kill_requests_lock:
+#                     if tab_id in tab_kill_requests:
+#                         print(f"Cancellation check detected tab-specific kill request for {tab_id} - forcing immediate cancellation")
+#                         raise asyncio.CancelledError(f"Tab {tab_id} kill requested")
+#             
+#             # More frequent checks during active operations
+#             await asyncio.sleep(0.1)
+#     except asyncio.CancelledError:
+#         # Allow cancellation of this check task itself
+#         print("Cancellation check task itself was cancelled")
+#         raise
+#     except Exception as e:
+#         print(f"Error in cancellation check: {e}")
+#         raise
 
 # Updated main function with improved cancellation handling and cleanup
 async def main(task_message, tab_id=None):
@@ -837,6 +856,24 @@ async def main(task_message, tab_id=None):
         async with tab_kill_requests_lock:
             if tab_id in tab_kill_requests:
                 raise asyncio.CancelledError(f"Tab {tab_id} kill requested during tool call")
+        
+        # Clean up cursor when done action is processed
+        if action_name == "done":
+            try:
+                if hasattr(agent, 'browser_session') and agent.browser_session:
+                    browser_session = agent.browser_session
+                    if hasattr(browser_session, 'cursor_manager') and browser_session.cursor_manager:
+                        print(f"Cleaning up cursors for done action in tab {tab_id}")
+                        if hasattr(browser_session, 'browser_context') and browser_session.browser_context:
+                            # Remove cursors from all pages
+                            cleanup_result = await browser_session.cursor_manager.remove_cursor_from_all_pages(browser_session.browser_context)
+                            print(f"Cursor cleanup result for done action: {cleanup_result}")
+                        else:
+                            # Fallback cleanup
+                            await browser_session.cursor_manager.cleanup_and_reset()
+                        print(f"Successfully cleaned up cursors for done action in tab {tab_id}")
+            except Exception as e:
+                print(f"Error cleaning up cursor for done action: {e}")
         
         await send_tool_call_update(action_name, details, status, tab_id)
     
@@ -889,29 +926,32 @@ async def main(task_message, tab_id=None):
                 return ActionResult(success=False, extracted_content="No websocket connection available")
 
             try:
-                # Create a special task that periodically checks for cancellation while waiting
-                wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
-                cancel_check_task = asyncio.create_task(check_cancellation())
+                # COMMENTED OUT: Create a special task that periodically checks for cancellation while waiting
+                # wait_event_task = asyncio.create_task(intervention_events[intervention_id].wait())
+                # cancel_check_task = asyncio.create_task(check_cancellation())
+                # 
+                # # Wait for resolution with timeout
+                # done, pending = await asyncio.wait(
+                #     [wait_event_task, cancel_check_task],
+                #     return_when=asyncio.FIRST_COMPLETED,
+                #     timeout=30000  # 8 hour timeout
+                # )
+                # 
+                # # Cancel any pending tasks
+                # for task in pending:
+                #     task.cancel()
+                # 
+                # # Check if we completed due to kill request
+                # if KILL_AGENT_REQUESTED:
+                #     raise asyncio.CancelledError("Kill requested during intervention wait")
+                # 
+                # # Check if we timed out (neither task completed)
+                # if not done:
+                #     print(f"Timeout waiting for human intervention: {reason}")
+                #     return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
                 
-                # Wait for resolution with timeout
-                done, pending = await asyncio.wait(
-                    [wait_event_task, cancel_check_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=30000  # 8 hour timeout
-                )
-                
-                # Cancel any pending tasks
-                for task in pending:
-                    task.cancel()
-                
-                # Check if we completed due to kill request
-                if KILL_AGENT_REQUESTED:
-                    raise asyncio.CancelledError("Kill requested during intervention wait")
-                
-                # Check if we timed out (neither task completed)
-                if not done:
-                    print(f"Timeout waiting for human intervention: {reason}")
-                    return ActionResult(success=False, extracted_content="Timeout waiting for human intervention")
+                # SIMPLIFIED: Just wait for the intervention event with timeout
+                await asyncio.wait_for(intervention_events[intervention_id].wait(), timeout=30000)
                 
                 # Normal completion
                 print(f"Human intervention completed for: {reason}")
@@ -955,56 +995,62 @@ async def main(task_message, tab_id=None):
     
     # Execute the agent's task and capture the result
     try:
-        # Create a cancellation check that runs alongside the agent (pass tab_id for specific cancellation)
-        cancel_check_task = asyncio.create_task(check_cancellation(tab_id))
+        # COMMENTED OUT: Create a cancellation check that runs alongside the agent (pass tab_id for specific cancellation)
+        # cancel_check_task = asyncio.create_task(check_cancellation(tab_id))
         
         try:
             # Store reference to the agent for potential cancellation
             if current_browser_agent_task:
                 setattr(current_browser_agent_task, '_agent', agent)
             
-            # Run the agent and cancellation checker concurrently
+            # Run the agent directly without cancellation checker
             agent_task = asyncio.create_task(agent.run())
             
-            # Wait for either the agent to complete or cancellation to occur
-            done, pending = await asyncio.wait(
-                [agent_task, cancel_check_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
+            # COMMENTED OUT: Wait for either the agent to complete or cancellation to occur
+            # done, pending = await asyncio.wait(
+            #     [agent_task, cancel_check_task],
+            #     return_when=asyncio.FIRST_COMPLETED
+            # )
             
-            # Cancel any remaining tasks
-            for task in pending:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+            # COMMENTED OUT: Cancel any remaining tasks
+            # for task in pending:
+            #     task.cancel()
+            #     try:
+            #         await task
+            #     except asyncio.CancelledError:
+            #         pass
             
-            # Check which task completed first
-            if agent_task in done:
-                # Agent completed normally
-                result = agent_task.result()
-                await send_completion_response(tab_id, result)
-                print(f"Agent completed normally for tab {tab_id}")
-                return result
-            else:
-                # Cancellation occurred first
-                print(f"Agent was cancelled for tab {tab_id}")
-                
-                # Force stop the agent
-                agent.state.stopped = True
-                agent.state.consecutive_failures = 999
-                
-                # Try to call agent stop method
-                try:
-                    stop_result = agent.stop()
-                    if asyncio.iscoroutine(stop_result):
-                        await stop_result
-                    print(f"Successfully stopped agent for tab {tab_id}")
-                except Exception as e:
-                    print(f"Error stopping agent for tab {tab_id}: {e}")
-                
-                raise asyncio.CancelledError("Agent was killed by user request")
+            # SIMPLIFIED: Just wait for agent to complete
+            result = await agent_task
+            await send_completion_response(tab_id, result)
+            print(f"Agent completed normally for tab {tab_id}")
+            return result
+            
+            # COMMENTED OUT: Check which task completed first
+            # if agent_task in done:
+            #     # Agent completed normally
+            #     result = agent_task.result()
+            #     await send_completion_response(tab_id, result)
+            #     print(f"Agent completed normally for tab {tab_id}")
+            #     return result
+            # else:
+            #     # Cancellation occurred first
+            #     print(f"Agent was cancelled for tab {tab_id}")
+            #     
+            #     # Force stop the agent
+            #     agent.state.stopped = True
+            #     agent.state.consecutive_failures = 999
+            #     
+            #     # Try to call agent stop method
+            #     try:
+            #         stop_result = agent.stop()
+            #         if asyncio.iscoroutine(stop_result):
+            #             await stop_result
+            #         print(f"Successfully stopped agent for tab {tab_id}")
+            #     except Exception as e:
+            #         print(f"Error stopping agent for tab {tab_id}: {e}")
+            #     
+            #     raise asyncio.CancelledError("Agent was killed by user request")
             
         except asyncio.CancelledError:
             # Handle cancellation explicitly
@@ -1021,25 +1067,26 @@ async def main(task_message, tab_id=None):
             except Exception as e:
                 print(f"Error stopping cancelled agent for tab {tab_id}: {e}")
             
-            # Cancel the checker if still running
-            if cancel_check_task and not cancel_check_task.done():
-                cancel_check_task.cancel()
-                try:
-                    await cancel_check_task
-                except asyncio.CancelledError:
-                    pass
+            # COMMENTED OUT: Cancel the checker if still running
+            # if cancel_check_task and not cancel_check_task.done():
+            #     cancel_check_task.cancel()
+            #     try:
+            #         await cancel_check_task
+            #     except asyncio.CancelledError:
+            #         pass
             
             # Re-raise to be handled by the outer try-catch
             raise
             
-        finally:
-            # Always cancel the checker when done
-            if cancel_check_task and not cancel_check_task.done():
-                cancel_check_task.cancel()
-                try:
-                    await cancel_check_task
-                except asyncio.CancelledError:
-                    pass
+        # COMMENTED OUT: finally block for cancellation checker
+        # finally:
+        #     # Always cancel the checker when done
+        #     if cancel_check_task and not cancel_check_task.done():
+        #         cancel_check_task.cancel()
+        #         try:
+        #             await cancel_check_task
+        #         except asyncio.CancelledError:
+        #             pass
     
     except asyncio.CancelledError:
         # Specifically handle task cancellation
@@ -1088,6 +1135,23 @@ async def main(task_message, tab_id=None):
     finally:
         # Ensure resources are cleaned up
         try:
+            # Clean up cursor from all pages when task completes
+            try:
+                if hasattr(agent, 'browser_session') and agent.browser_session:
+                    browser_session = agent.browser_session
+                    if hasattr(browser_session, 'cursor_manager') and browser_session.cursor_manager:
+                        print(f"Cleaning up cursors for completed agent task in tab {tab_id}")
+                        if hasattr(browser_session, 'browser_context') and browser_session.browser_context:
+                            # Remove cursors from all pages
+                            cleanup_result = await browser_session.cursor_manager.remove_cursor_from_all_pages(browser_session.browser_context)
+                            print(f"Cursor cleanup result for completed task: {cleanup_result}")
+                        else:
+                            # Fallback cleanup
+                            await browser_session.cursor_manager.cleanup_and_reset()
+                        print(f"Successfully cleaned up cursors for completed task in tab {tab_id}")
+            except Exception as e:
+                print(f"Error cleaning up cursor for completed task: {e}")
+            
             # Clean up kill request flags for this specific task
             try:
                 # Clear global kill flag only if we're killing all tasks

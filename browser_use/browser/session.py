@@ -2173,6 +2173,13 @@ class BrowserSession(BaseModel):
 				raise IndexError(f'Tab index {tab_index} out of range. Available tabs: {len(pages)}')
 			page = pages[tab_index]
 
+		# Remove cursor from the page before closing it
+		try:
+			removal_result = await self.cursor_manager.remove_cursor_from_page(page)
+			self.logger.debug(f"Removed cursor from page before closing: {removal_result}")
+		except Exception as e:
+			self.logger.debug(f"Failed to remove cursor from closing page: {type(e).__name__}: {e}")
+
 		await page.close()
 
 		# reset the self.agent_current_page and self.human_current_page references to first available tab
@@ -2792,6 +2799,13 @@ class BrowserSession(BaseModel):
 
 		# Check if this is the foreground tab as well
 		is_foreground = self.agent_current_page == self.human_current_page
+
+		# Remove cursor from the current page before closing it
+		try:
+			removal_result = await self.cursor_manager.remove_cursor_from_page(self.agent_current_page)
+			self.logger.debug(f"Removed cursor from current page before closing: {removal_result}")
+		except Exception as e:
+			self.logger.debug(f"Failed to remove cursor from current page: {type(e).__name__}: {e}")
 
 		# Close the tab
 		try:
@@ -3537,12 +3551,17 @@ class BrowserSession(BaseModel):
 			raise BrowserError(f'No tab found with page_id: {page_id}')
 
 		# Check if the tab's URL is allowed before switching
-		
+		##
 		handler_of_events = self.get_first_real_page()
 		await handler_of_events.evaluate('async (id) => { return await window.switchTab(id); }', page_id)
 
+
+		print(f"switching to tab {page_id} {pages[page_id].url}")
+
 		# Update references to the selected page
 		page = pages[page_id]
+
+	
 		self.agent_current_page = page
 		# Optionally bring the tab to the front so subsequent actions (e.g. screenshots) succeed
 
